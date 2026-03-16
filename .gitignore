@@ -1,0 +1,7 @@
+node_modules/
+dist/
+output/
+.devserver.log
+*.log
+.vscode/
+.DS_Store

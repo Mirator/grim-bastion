@@ -1,0 +1,45 @@
+{
+  "name": "grim-bastion",
+  "version": "0.1.0",
+  "description": "Grim Bastion - low poly roguelite tower defense action prototype",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mirator/grim-bastion.git"
+  },
+  "keywords": [
+    "threejs",
+    "typescript",
+    "tower-defense",
+    "roguelite"
+  ],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Mirator/grim-bastion/issues"
+  },
+  "homepage": "https://github.com/Mirator/grim-bastion#readme",
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.19.3",
+    "howler": "^2.2.4",
+    "three": "^0.183.2"
+  },
+  "devDependencies": {
+    "@types/howler": "^2.2.12",
+    "@types/node": "^25.5.0",
+    "@types/three": "^0.183.1",
+    "eslint": "^10.0.3",
+    "playwright": "^1.58.2",
+    "prettier": "^3.8.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.0",
+    "vitest": "^4.1.0"
+  }
+}
