@@ -14,6 +14,7 @@ import {
 import { biomeSequence } from "./data/biomes";
 import { Renderer3D } from "./render/Renderer3D";
 import { InputController, type InputState } from "./systems/InputController";
+import { buildReticleFrameData, type ReticleFrameData } from "./systems/reticleFrame";
 import { loadSave, patchSave } from "./systems/SaveSystem";
 import { StatusSystem } from "./systems/StatusSystem";
 import { UpgradeSystem } from "./systems/UpgradeSystem";
@@ -64,6 +65,8 @@ interface PhysicsHandles {
 }
 
 export class GameApp {
+  private readonly canvas: HTMLCanvasElement;
+
   private renderer: Renderer3D;
 
   private hud: HudUI;
@@ -88,6 +91,8 @@ export class GameApp {
 
   private currentInput: InputState;
 
+  private reticleFrame: ReticleFrameData;
+
   private frameHandle = 0;
 
   private accumulator = 0;
@@ -103,6 +108,7 @@ export class GameApp {
   private loadoutCycle = 0;
 
   constructor(canvas: HTMLCanvasElement, hudRoot: HTMLElement, renderer: Renderer3D, physics: PhysicsHandles) {
+    this.canvas = canvas;
     this.renderer = renderer;
     this.physics = physics;
     this.save = loadSave();
@@ -111,7 +117,8 @@ export class GameApp {
     this.audio = new AudioManager(this.save.settings.masterVolume);
 
     this.state = this.createInitialState();
-    this.currentInput = this.input.sample(window.innerWidth, window.innerHeight);
+    this.currentInput = this.sampleInput();
+    this.reticleFrame = buildReticleFrameData(v3(), this.state.buildNodes);
 
     this.waveDirector = new WaveDirector({
       spawnEnemy: (enemyType, laneId, isElite, isBoss) => this.spawnEnemy(enemyType, laneId, isElite, isBoss),
@@ -132,9 +139,9 @@ export class GameApp {
     });
 
     this.exposeAutomationHooks();
-    this.updateSelectedNodeFromReticle();
+    this.updateReticleFrame(FIXED_DT, this.currentInput);
     this.hud.update(this.state);
-    this.renderer.render(this.state);
+    this.renderer.render(this.state, FIXED_DT);
   }
 
   start(): void {
@@ -153,6 +160,10 @@ export class GameApp {
     this.renderer.dispose();
   }
 
+  private sampleInput(): InputState {
+    return this.input.sample(this.canvas.getBoundingClientRect());
+  }
+
   private loop = (): void => {
     if (!this.running) {
       return;
@@ -162,7 +173,7 @@ export class GameApp {
     const frameDt = Math.min(MAX_FRAME, time - this.previousTime);
     this.previousTime = time;
 
-    this.currentInput = this.input.sample(window.innerWidth, window.innerHeight);
+    this.currentInput = this.sampleInput();
     this.handleGlobalInput(this.currentInput);
     this.accumulator += frameDt;
     while (this.accumulator >= FIXED_DT) {
@@ -170,7 +181,7 @@ export class GameApp {
       this.accumulator -= FIXED_DT;
     }
 
-    this.renderer.render(this.state);
+    this.renderer.render(this.state, frameDt);
     this.hud.update(this.state);
 
     this.frameHandle = requestAnimationFrame(this.loop);
@@ -179,12 +190,14 @@ export class GameApp {
   advanceTime(ms: number): void {
     const steps = Math.max(1, Math.round(ms / (1000 / 60)));
     const dt = ms / 1000 / steps;
+    let lastStepDt = FIXED_DT;
     for (let i = 0; i < steps; i += 1) {
-      this.currentInput = this.input.sample(window.innerWidth, window.innerHeight);
+      this.currentInput = this.sampleInput();
       this.handleGlobalInput(this.currentInput);
       this.update(dt, this.currentInput);
+      lastStepDt = dt;
     }
-    this.renderer.render(this.state);
+    this.renderer.render(this.state, lastStepDt);
     this.hud.update(this.state);
   }
 
@@ -293,6 +306,7 @@ export class GameApp {
     this.pendingOverchargeTimer = 0;
     this.loadoutCycle = 0;
     this.syncBiomeNodes();
+    this.updateReticleFrame(FIXED_DT, this.currentInput);
     this.syncHeroPhysics();
     this.hud.update(this.state);
   }
@@ -381,6 +395,7 @@ export class GameApp {
 
   private update(dt: number, input: InputState): void {
     this.state.time += dt;
+    this.updateReticleFrame(dt, input);
     this.updateHero(dt, input);
     this.updateHeroAbilities(dt, input);
     this.updateShrines(dt);
@@ -399,7 +414,6 @@ export class GameApp {
     this.regenMana(dt);
     this.pendingOverchargeTimer = Math.max(0, this.pendingOverchargeTimer - dt);
 
-    this.updateSelectedNodeFromReticle();
     this.syncHeroPhysics();
 
     this.state.hero.invulnerabilityTimer = Math.max(0, this.state.hero.invulnerabilityTimer - dt);
@@ -445,13 +459,12 @@ export class GameApp {
     this.state.hero.position.x = clamp(this.state.hero.position.x, -28, 16);
     this.state.hero.position.z = clamp(this.state.hero.position.z, -19, 19);
 
-    const reticle = this.renderer.screenToGround(input.mouseNdcX, input.mouseNdcY);
+    const reticle = this.reticleFrame.world;
     const facing = normalize(sub(reticle, this.state.hero.position));
     if (length2D(facing) > 0.001) {
       this.state.hero.facing.x = facing.x;
       this.state.hero.facing.z = facing.z;
     }
-    this.renderer.setReticle(reticle);
 
     if (this.state.mode !== "build" && input.firePrimary && this.state.hero.attackCooldown <= 0) {
       this.heroAttack(reticle);
@@ -587,7 +600,7 @@ export class GameApp {
         break;
       }
       case "explosive-rune": {
-        const target = this.renderer.screenToGround(this.currentInput.mouseNdcX, this.currentInput.mouseNdcY);
+        const target = this.reticleFrame.abilityTarget;
         const shockIntensity = this.state.ownedUpgradeIds.has("hero-rune-shock") ? 1.2 : 0.5;
         for (const enemy of this.state.enemies) {
           if (enemy.isDead) {
@@ -1370,20 +1383,11 @@ export class GameApp {
     this.state.buildNodes = biome.buildNodes.map((node) => ({ ...node, occupiedBy: null }));
   }
 
-  private updateSelectedNodeFromReticle(): void {
-    const reticle = this.renderer.screenToGround(this.currentInput.mouseNdcX, this.currentInput.mouseNdcY);
-    this.renderer.setReticle(reticle);
-
-    let selectedNodeId: string | null = null;
-    let bestDist = 1.2;
-    for (const buildNode of this.state.buildNodes) {
-      const dist = distance2D(buildNode.position, reticle);
-      if (dist < bestDist) {
-        bestDist = dist;
-        selectedNodeId = buildNode.id;
-      }
-    }
-    this.state.selectedNodeId = selectedNodeId;
+  private updateReticleFrame(dt: number, input: InputState): void {
+    const reticleWorld = this.renderer.screenToGround(input.mouseNdcX, input.mouseNdcY);
+    this.reticleFrame = buildReticleFrameData(reticleWorld, this.state.buildNodes);
+    this.state.selectedNodeId = this.reticleFrame.selectedNodeId;
+    this.renderer.setReticle(this.reticleFrame.world, dt);
   }
 
   private tryPlaceAtSelection(): void {
@@ -1560,6 +1564,7 @@ export class GameApp {
   private exposeAutomationHooks(): void {
     (window as unknown as { render_game_to_text: () => string }).render_game_to_text = () => {
       const biome = biomeSequence[this.state.currentBiomeIndex] ?? biomeSequence[biomeSequence.length - 1]!;
+      const camera = this.renderer.getCameraDiagnostics();
       const snapshot: RenderTextSnapshot = {
         coordinateSystem: "Right-handed world: origin at arena center, +x right, +z forward toward bastion, y up.",
         mode: this.state.mode,
@@ -1611,6 +1616,11 @@ export class GameApp {
           position: copyVec3(trap.position),
           cooldown: trap.cooldown,
         })),
+        camera: {
+          position: camera.position,
+          focus: camera.focus,
+          lockTargetId: camera.lockTargetId,
+        },
       };
 
       return JSON.stringify(snapshot);

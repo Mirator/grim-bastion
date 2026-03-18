@@ -18,6 +18,13 @@ export interface InputState {
   pointerLocked: boolean;
 }
 
+export interface InputViewport {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 const KEY_BINDINGS = {
   forward: ["KeyW", "ArrowUp"],
   backward: ["KeyS", "ArrowDown"],
@@ -67,7 +74,12 @@ export class InputController {
     }
   }
 
-  sample(width: number, height: number): InputState {
+  sample(viewport: InputViewport): InputState {
+    const width = Math.max(1, viewport.width);
+    const height = Math.max(1, viewport.height);
+    const localMouseX = Math.max(0, Math.min(width, this.pointer.x - viewport.left));
+    const localMouseY = Math.max(0, Math.min(height, this.pointer.y - viewport.top));
+
     const moveX = this.axis(KEY_BINDINGS.left, KEY_BINDINGS.right);
     const moveZ = this.axis(KEY_BINDINGS.forward, KEY_BINDINGS.backward);
 
@@ -86,8 +98,8 @@ export class InputController {
       cycleWeapon: this.consumeTransient("cycleWeapon"),
       switchLoadout: this.consumeTransient("switchLoadout"),
       toggleFullscreen: this.consumeTransient("toggleFullscreen"),
-      mouseNdcX: (this.pointer.x / Math.max(width, 1)) * 2 - 1,
-      mouseNdcY: -((this.pointer.y / Math.max(height, 1)) * 2 - 1),
+      mouseNdcX: (localMouseX / width) * 2 - 1,
+      mouseNdcY: -((localMouseY / height) * 2 - 1),
       pointerLocked: this.pointerLocked,
     };
 
@@ -191,7 +203,9 @@ export class InputController {
     this.pointerLocked = document.pointerLockElement === this.target;
   };
 
-  private onClick = (): void => {
+  private onClick = (event: MouseEvent): void => {
+    this.pointer.x = event.clientX;
+    this.pointer.y = event.clientY;
     if (this.target instanceof HTMLElement && document.pointerLockElement !== this.target) {
       this.target.requestPointerLock().catch(() => {
         // Ignore; pointer lock is optional.

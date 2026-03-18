@@ -431,4 +431,9 @@ export interface RenderTextSnapshot {
     position: Vec3;
     cooldown: number;
   }>;
+  camera?: {
+    position: Vec3;
+    focus: Vec3;
+    lockTargetId: string | null;
+  };
 }

@@ -1,8 +1,13 @@
 import * as THREE from "three";
-import type { MutableGameState, Vec3 } from "../types";
+import type { EnemyState, MutableGameState, Vec3 } from "../types";
+import { computeDampingAlpha, resolveCameraLockId } from "./cameraMath";
 
 function setObjectPosition(object: THREE.Object3D, position: Vec3): void {
   object.position.set(position.x, position.y, position.z);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 function hueForEnemy(type: string): number {
@@ -27,6 +32,26 @@ function hueForEnemy(type: string): number {
 }
 
 export class Renderer3D {
+  private static readonly ARENA_MIN_X = -28;
+
+  private static readonly ARENA_MAX_X = 16;
+
+  private static readonly ARENA_MIN_Z = -19;
+
+  private static readonly ARENA_MAX_Z = 19;
+
+  private static readonly CAMERA_POSITION_LAMBDA = 9.75;
+
+  private static readonly CAMERA_FOCUS_LAMBDA = 12;
+
+  private static readonly RETICLE_LAMBDA = 30;
+
+  private static readonly CAMERA_POSITION_DEADZONE_SQ = 0.015 * 0.015;
+
+  private static readonly CAMERA_FOCUS_DEADZONE_SQ = 0.02 * 0.02;
+
+  private static readonly RETICLE_DEADZONE_SQ = 0.01 * 0.01;
+
   readonly renderer: THREE.WebGLRenderer;
 
   readonly scene: THREE.Scene;
@@ -63,10 +88,32 @@ export class Renderer3D {
 
   private reticleTarget = new THREE.Vector3();
 
+  private raycastNdc = new THREE.Vector2();
+
+  private raycastGroundHit = new THREE.Vector3();
+
+  private lastGroundPoint = new THREE.Vector3(8, 0, 0);
+
+  private cameraDesiredPosition = new THREE.Vector3();
+
+  private cameraDesiredFocus = new THREE.Vector3(0, 1.2, 0);
+
+  private cameraCurrentFocus = new THREE.Vector3(0, 1.2, 0);
+
+  private cameraLockTargetId: string | null = null;
+
+  private readonly biomeBackgroundColors = [
+    new THREE.Color("#2b3444"),
+    new THREE.Color("#2d3b4c"),
+    new THREE.Color("#2c4433"),
+  ];
+
+  private activeBiomeBackgroundIndex = -1;
+
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color("#1c2430");
+    this.scene.background = this.biomeBackgroundColors[0];
     this.clock = new THREE.Clock();
     this.worldPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     this.raycaster = new THREE.Raycaster();
@@ -116,20 +163,45 @@ export class Renderer3D {
   };
 
   screenToGround(mouseNdcX: number, mouseNdcY: number): Vec3 {
-    this.raycaster.setFromCamera(new THREE.Vector2(mouseNdcX, mouseNdcY), this.camera);
-    const target = new THREE.Vector3();
-    this.raycaster.ray.intersectPlane(this.worldPlane, target);
-    return { x: target.x, y: 0, z: target.z };
+    this.raycastNdc.set(mouseNdcX, mouseNdcY);
+    this.raycaster.setFromCamera(this.raycastNdc, this.camera);
+    const hit = this.raycaster.ray.intersectPlane(this.worldPlane, this.raycastGroundHit);
+    if (hit) {
+      this.lastGroundPoint.copy(hit);
+    }
+
+    this.lastGroundPoint.x = clamp(this.lastGroundPoint.x, Renderer3D.ARENA_MIN_X, Renderer3D.ARENA_MAX_X);
+    this.lastGroundPoint.y = 0;
+    this.lastGroundPoint.z = clamp(this.lastGroundPoint.z, Renderer3D.ARENA_MIN_Z, Renderer3D.ARENA_MAX_Z);
+
+    return { x: this.lastGroundPoint.x, y: 0, z: this.lastGroundPoint.z };
   }
 
-  setReticle(position: Vec3): void {
+  setReticle(position: Vec3, frameDt: number): void {
     this.reticleTarget.set(position.x, 0.03, position.z);
-    this.reticleMesh.position.lerp(this.reticleTarget, 0.4);
+    const alpha = computeDampingAlpha(Renderer3D.RETICLE_LAMBDA, frameDt);
+    this.dampVector(this.reticleMesh.position, this.reticleTarget, alpha, Renderer3D.RETICLE_DEADZONE_SQ);
   }
 
-  render(state: MutableGameState): void {
+  getCameraDiagnostics(): { position: Vec3; focus: Vec3; lockTargetId: string | null } {
+    return {
+      position: {
+        x: this.camera.position.x,
+        y: this.camera.position.y,
+        z: this.camera.position.z,
+      },
+      focus: {
+        x: this.cameraCurrentFocus.x,
+        y: this.cameraCurrentFocus.y,
+        z: this.cameraCurrentFocus.z,
+      },
+      lockTargetId: this.cameraLockTargetId,
+    };
+  }
+
+  render(state: MutableGameState, frameDt: number): void {
     this.updateEnvironmentColor(state);
-    this.updateHero(state);
+    this.updateHero(state, frameDt);
     this.syncEnemyMeshes(state);
     this.syncTowerMeshes(state);
     this.syncTrapMeshes(state);
@@ -178,33 +250,88 @@ export class Renderer3D {
   }
 
   private updateEnvironmentColor(state: MutableGameState): void {
-    const biomeColor = state.currentBiomeIndex === 0 ? "#2b3444" : state.currentBiomeIndex === 1 ? "#2d3b4c" : "#2c4433";
-    this.scene.background = new THREE.Color(biomeColor);
+    const biomeIndex = Math.max(0, Math.min(this.biomeBackgroundColors.length - 1, state.currentBiomeIndex));
+    if (biomeIndex === this.activeBiomeBackgroundIndex) {
+      return;
+    }
+    this.activeBiomeBackgroundIndex = biomeIndex;
+    this.scene.background = this.biomeBackgroundColors[biomeIndex];
   }
 
-  private updateHero(state: MutableGameState): void {
+  private updateHero(state: MutableGameState, frameDt: number): void {
     setObjectPosition(this.heroMesh, { x: state.hero.position.x, y: state.hero.position.y + 0.8, z: state.hero.position.z });
     this.heroMesh.rotation.y = Math.atan2(state.hero.facing.x, state.hero.facing.z);
 
-    const nearestEnemy = state.enemies
-      .filter((enemy) => !enemy.isDead)
-      .sort((a, b) => {
-        const da = (a.position.x - state.hero.position.x) ** 2 + (a.position.z - state.hero.position.z) ** 2;
-        const db = (b.position.x - state.hero.position.x) ** 2 + (b.position.z - state.hero.position.z) ** 2;
-        return da - db;
-      })[0];
+    let bestEnemyId: string | null = null;
+    let bestEnemy: EnemyState | null = null;
+    let bestEnemyDistanceSq = Number.POSITIVE_INFINITY;
+    let currentLockFound = false;
+    let currentLockDistanceSq = Number.POSITIVE_INFINITY;
+    let lockEnemy: EnemyState | null = null;
 
-    const desiredCamera = new THREE.Vector3(
+    for (const enemy of state.enemies) {
+      if (enemy.isDead) {
+        continue;
+      }
+
+      const dx = enemy.position.x - state.hero.position.x;
+      const dz = enemy.position.z - state.hero.position.z;
+      const distSq = dx * dx + dz * dz;
+
+      if (distSq < bestEnemyDistanceSq) {
+        bestEnemyDistanceSq = distSq;
+        bestEnemyId = enemy.id;
+        bestEnemy = enemy;
+      }
+
+      if (enemy.id === this.cameraLockTargetId) {
+        currentLockFound = true;
+        currentLockDistanceSq = distSq;
+        lockEnemy = enemy;
+      }
+    }
+
+    this.cameraLockTargetId = resolveCameraLockId({
+      currentLockId: this.cameraLockTargetId,
+      bestCandidateId: bestEnemyId,
+      bestCandidateDistanceSq: bestEnemyDistanceSq,
+      currentLockFound,
+      currentLockDistanceSq,
+    });
+
+    if (this.cameraLockTargetId === bestEnemyId) {
+      lockEnemy = bestEnemy;
+    } else if (lockEnemy?.id !== this.cameraLockTargetId) {
+      lockEnemy = null;
+    }
+
+    this.cameraDesiredPosition.set(
       state.hero.position.x - 6.8,
       11.5,
       state.hero.position.z + 10.5,
     );
-    this.camera.position.lerp(desiredCamera, 0.15);
+    const positionAlpha = computeDampingAlpha(Renderer3D.CAMERA_POSITION_LAMBDA, frameDt);
+    this.dampVector(this.camera.position, this.cameraDesiredPosition, positionAlpha, Renderer3D.CAMERA_POSITION_DEADZONE_SQ);
 
-    const focusX = nearestEnemy ? state.hero.position.x * 0.4 + nearestEnemy.position.x * 0.6 : state.hero.position.x + state.hero.facing.x * 2.8;
-    const focusZ = nearestEnemy ? state.hero.position.z * 0.4 + nearestEnemy.position.z * 0.6 : state.hero.position.z + state.hero.facing.z * 2.8;
-    const focus = new THREE.Vector3(focusX, 1.2, focusZ);
-    this.camera.lookAt(focus);
+    const focusX = lockEnemy
+      ? state.hero.position.x * 0.4 + lockEnemy.position.x * 0.6
+      : state.hero.position.x + state.hero.facing.x * 2.8;
+    const focusZ = lockEnemy
+      ? state.hero.position.z * 0.4 + lockEnemy.position.z * 0.6
+      : state.hero.position.z + state.hero.facing.z * 2.8;
+    this.cameraDesiredFocus.set(focusX, 1.2, focusZ);
+
+    const focusAlpha = computeDampingAlpha(Renderer3D.CAMERA_FOCUS_LAMBDA, frameDt);
+    this.dampVector(this.cameraCurrentFocus, this.cameraDesiredFocus, focusAlpha, Renderer3D.CAMERA_FOCUS_DEADZONE_SQ);
+    this.camera.lookAt(this.cameraCurrentFocus);
+  }
+
+  private dampVector(current: THREE.Vector3, target: THREE.Vector3, alpha: number, deadzoneSq: number): void {
+    if (current.distanceToSquared(target) <= deadzoneSq) {
+      current.copy(target);
+      return;
+    }
+    current.lerp(target, alpha);
   }
 
   private getEnemyMesh(id: string, type: string): THREE.Mesh {
