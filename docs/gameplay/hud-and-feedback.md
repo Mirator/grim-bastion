@@ -26,8 +26,10 @@ Describe how gameplay-critical information is surfaced so players can make fast,
   - Shows three card choices with category/rarity and synergy hints.
 - Minimap:
   - Draws lane routes, hero position, enemies, towers, and bastion core anchor.
+  - Shows core no-build radius and current build reticle marker during build mode.
 - In-world feedback:
-  - Build node rings show selectable/occupied/selected states.
+  - Build preview ring at reticle ground point shows valid/invalid/insufficient-gold states.
+  - Core no-build radius ring is shown in build mode.
   - Reticle and camera lock behavior support aiming clarity.
   - Enemy rendering reflects status states (for example, shock/freeze readability).
 - Audio feedback:

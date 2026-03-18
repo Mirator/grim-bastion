@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canToggleCombatView,
+  computeJumpArcHeight,
   computeEnemyMoveSpeed,
   computeStatusMoveMultiplier,
   computeWitchAuraMultiplier,
@@ -69,5 +70,14 @@ describe("gameplay rules", () => {
     expect(resolveDigitHotkeyAction("upgrade", 1, 8)).toEqual({ upgradeIndex: 1, buildIndex: null });
     expect(resolveDigitHotkeyAction("upgrade", 5, 8)).toEqual({ upgradeIndex: null, buildIndex: null });
     expect(resolveDigitHotkeyAction("build", 5, 8)).toEqual({ upgradeIndex: null, buildIndex: 5 });
+  });
+
+  it("builds a smooth jump arc with zero at start and landing", () => {
+    const peak = 1.05;
+    expect(computeJumpArcHeight(0, peak)).toBe(0);
+    expect(computeJumpArcHeight(1, peak)).toBe(0);
+    expect(computeJumpArcHeight(0.5, peak)).toBeCloseTo(peak, 5);
+    expect(computeJumpArcHeight(0.25, peak)).toBeGreaterThan(0);
+    expect(computeJumpArcHeight(0.75, peak)).toBeCloseTo(computeJumpArcHeight(0.25, peak), 5);
   });
 });

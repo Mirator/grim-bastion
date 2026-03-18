@@ -6,6 +6,7 @@ export interface InputState {
   useAbility1: boolean;
   useAbility2: boolean;
   useDash: boolean;
+  jump: boolean;
   toggleBuild: boolean;
   startWave: boolean;
   startRun: boolean;
@@ -45,6 +46,14 @@ export function digitHotkeyFromCode(code: string): number | null {
     return null;
   }
   return value - 1;
+}
+
+export function isDashKeyCode(code: string): boolean {
+  return code === "ShiftLeft" || code === "ShiftRight";
+}
+
+export function isJumpKeyCode(code: string): boolean {
+  return code === "Space";
 }
 
 export class InputController {
@@ -111,7 +120,8 @@ export class InputController {
       fireSecondary: this.buttonsDown.has(2),
       useAbility1: this.consumeTransient("ability1") || this.keysDown.has("KeyQ"),
       useAbility2: this.consumeTransient("ability2") || this.keysDown.has("KeyE"),
-      useDash: this.consumeTransient("dash") || this.keysDown.has("Space"),
+      useDash: this.consumeTransient("dash"),
+      jump: this.consumeTransient("jump"),
       toggleBuild: this.consumeTransient("toggleBuild"),
       startWave: this.consumeTransient("startWave"),
       startRun: this.consumeTransient("startRun"),
@@ -180,8 +190,12 @@ export class InputController {
       case "KeyE":
         this.transient.ability2 = true;
         break;
-      case "Space":
+      case "ShiftLeft":
+      case "ShiftRight":
         this.transient.dash = true;
+        break;
+      case "Space":
+        this.transient.jump = true;
         break;
       case "KeyR":
         this.transient.cycleWeapon = true;

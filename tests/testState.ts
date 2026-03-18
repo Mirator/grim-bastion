@@ -1,4 +1,3 @@
-import { biomeSequence } from "../src/game/data/biomes";
 import type { MutableGameState } from "../src/game/types";
 import { v3 } from "../src/game/utils/math";
 
@@ -36,15 +35,23 @@ export function makeTestState(): MutableGameState {
         "overcharge-aura": 0,
       },
       invulnerabilityTimer: 0,
+      jumpActive: false,
+      jumpElapsed: 0,
+      jumpDuration: 0.42,
+      jumpPeakHeight: 1.05,
     },
     enemies: [],
     towers: [],
     traps: [],
     projectiles: [],
     floatingTexts: [],
-    buildNodes: biomeSequence[0]!.buildNodes.map((node) => ({ ...node })),
+    placementPreview: {
+      position: v3(),
+      canPlace: false,
+      blockReason: null,
+      sellTarget: null,
+    },
     selectedBuildType: "ballista",
-    selectedNodeId: null,
     selectedTargetId: null,
     currentBiomeIndex: 0,
     wave: {

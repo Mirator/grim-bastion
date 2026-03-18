@@ -76,6 +76,10 @@ export interface HeroState {
   attackCooldown: number;
   abilityCooldowns: Record<AbilityType, number>;
   invulnerabilityTimer: number;
+  jumpActive: boolean;
+  jumpElapsed: number;
+  jumpDuration: number;
+  jumpPeakHeight: number;
 }
 
 export interface StatusStack {
@@ -125,6 +129,20 @@ export interface BuildNode {
   allowsTower: boolean;
   allowsTrap: boolean;
   occupiedBy: string | null;
+}
+
+export type DefenseKind = "tower" | "trap";
+
+export type PlacementBlockReason = "insufficient-gold" | "core-buffer" | "overlap";
+
+export interface BuildPlacementPreview {
+  position: Vec3;
+  canPlace: boolean;
+  blockReason: PlacementBlockReason | null;
+  sellTarget: {
+    id: string;
+    kind: DefenseKind;
+  } | null;
 }
 
 export interface TowerStats {
@@ -347,9 +365,8 @@ export interface MutableGameState {
   traps: TrapState[];
   projectiles: ProjectileState[];
   floatingTexts: FloatingText[];
-  buildNodes: BuildNode[];
+  placementPreview: BuildPlacementPreview;
   selectedBuildType: TowerType | TrapType;
-  selectedNodeId: string | null;
   selectedTargetId: string | null;
   currentBiomeIndex: number;
   wave: WaveRuntimeState;
@@ -412,6 +429,8 @@ export interface RenderTextSnapshot {
     maxHealth: number;
     weapon: WeaponType;
     abilityCooldowns: Record<AbilityType, number>;
+    jumpActive: boolean;
+    jumpProgress: number;
   };
   enemies: Array<{
     id: string;
@@ -437,6 +456,15 @@ export interface RenderTextSnapshot {
     position: Vec3;
     cooldown: number;
   }>;
+  placementPreview: {
+    position: Vec3;
+    canPlace: boolean;
+    blockReason: PlacementBlockReason | null;
+    sellTarget: {
+      id: string;
+      kind: DefenseKind;
+    } | null;
+  };
   camera?: {
     position: Vec3;
     focus: Vec3;

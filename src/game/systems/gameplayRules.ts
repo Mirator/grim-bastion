@@ -4,6 +4,17 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+export function computeJumpArcHeight(progress: number, peakHeight: number): number {
+  if (!Number.isFinite(progress) || !Number.isFinite(peakHeight) || peakHeight <= 0) {
+    return 0;
+  }
+  const clampedProgress = clamp(progress, 0, 1);
+  if (clampedProgress <= 0 || clampedProgress >= 1) {
+    return 0;
+  }
+  return Math.sin(Math.PI * clampedProgress) * peakHeight;
+}
+
 export function canToggleCombatView(mode: GameMode, waveActive: boolean): boolean {
   if (!waveActive) {
     return false;

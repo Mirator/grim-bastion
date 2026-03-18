@@ -1,14 +1,21 @@
 import type { BiomeDefinition, BuildNode, LaneDefinition, Vec3, WaveTemplate } from "../types";
+import { CORE_WORLD_POSITION } from "../constants";
 
 function point(x: number, y: number, z: number): Vec3 {
   return { x, y, z };
 }
 
 function lane(id: string, points: Vec3[], flyingOffset = 4): LaneDefinition {
+  const lanePoints = points.slice();
+  const lastPoint = lanePoints[lanePoints.length - 1];
+  if (!lastPoint || lastPoint.x !== CORE_WORLD_POSITION.x || lastPoint.z !== CORE_WORLD_POSITION.z) {
+    lanePoints.push(point(CORE_WORLD_POSITION.x, CORE_WORLD_POSITION.y, CORE_WORLD_POSITION.z));
+  }
+
   return {
     id,
-    points,
-    flyingPoints: points.map((p) => ({ x: p.x, y: p.y + flyingOffset, z: p.z })),
+    points: lanePoints,
+    flyingPoints: lanePoints.map((p) => ({ x: p.x, y: p.y + flyingOffset, z: p.z })),
   };
 }
 

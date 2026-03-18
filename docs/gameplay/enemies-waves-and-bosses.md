@@ -28,6 +28,8 @@ Describe hostile encounter structure: enemy archetypes, wave spawning, boss esca
   - `boss`: phase-based milestone enemy.
 - Movement and pathing:
   - Enemies advance lane points by nearest next waypoint progression.
+  - Every lane route now terminates at bastion core endpoint.
+  - Core damage/escape resolution is based on entering the core endpoint zone.
   - Speed is influenced by statuses and support aura effects.
 - Boss pacing:
   - Boss phase thresholds add encounter spikes such as reinforcement summons and tower pressure pulses.

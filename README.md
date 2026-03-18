@@ -23,7 +23,8 @@ npm test
 - `WASD` move hero (camera-relative)
 - Mouse look (pointer lock), center crosshair aim, `LMB` attack, `RMB` sell in build mode
 - `Q` / `E` cast loadout abilities
-- `Space` dash
+- `Shift` dash
+- `Space` jump
 - `R` cycle weapon
 - `L` switch ability loadout preset
 - `1-8` select build item, `[` / `]` cycle build selection

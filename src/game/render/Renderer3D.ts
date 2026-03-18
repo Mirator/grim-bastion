@@ -1,4 +1,9 @@
 import * as THREE from "three";
+import {
+  CORE_BUILD_BUFFER_RADIUS,
+  CORE_WORLD_POSITION,
+} from "../constants";
+import { biomeSequence } from "../data/biomes";
 import type { MutableGameState, Vec3 } from "../types";
 import {
   clampCameraPitch,
@@ -126,13 +131,17 @@ export class Renderer3D {
 
   private projectileMeshes = new Map<string, THREE.Mesh>();
 
-  private buildNodeMeshes = new Map<string, THREE.Mesh>();
-
   private hazardMeshes = new Map<string, THREE.Mesh>();
+
+  private laneLineMeshes = new Map<string, THREE.Line>();
 
   private pooledEnemyMeshes: THREE.Mesh[] = [];
 
   private pooledProjectileMeshes: THREE.Mesh[] = [];
+
+  private placementPreviewMesh: THREE.Mesh;
+
+  private coreBuildBufferMesh: THREE.Mesh;
 
   private reticleTarget = new THREE.Vector3();
 
@@ -166,6 +175,8 @@ export class Renderer3D {
 
   private activeBiomeBackgroundIndex = -1;
 
+  private activeLaneBiomeIndex = -1;
+
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.scene = new THREE.Scene();
@@ -197,6 +208,23 @@ export class Renderer3D {
     this.reticleMesh.position.y = 1;
     this.scene.add(this.reticleMesh);
 
+    this.placementPreviewMesh = new THREE.Mesh(
+      new THREE.RingGeometry(0.55, 0.78, 32),
+      new THREE.MeshBasicMaterial({ color: "#65f2a6", transparent: true, opacity: 0.85, side: THREE.DoubleSide }),
+    );
+    this.placementPreviewMesh.rotation.x = -Math.PI / 2;
+    this.placementPreviewMesh.visible = false;
+    this.scene.add(this.placementPreviewMesh);
+
+    this.coreBuildBufferMesh = new THREE.Mesh(
+      new THREE.RingGeometry(CORE_BUILD_BUFFER_RADIUS - 0.1, CORE_BUILD_BUFFER_RADIUS, 64),
+      new THREE.MeshBasicMaterial({ color: "#82c6f3", transparent: true, opacity: 0.35, side: THREE.DoubleSide }),
+    );
+    this.coreBuildBufferMesh.rotation.x = -Math.PI / 2;
+    this.coreBuildBufferMesh.position.set(CORE_WORLD_POSITION.x, 0.03, CORE_WORLD_POSITION.z);
+    this.coreBuildBufferMesh.visible = false;
+    this.scene.add(this.coreBuildBufferMesh);
+
     this.addLighting();
     this.addEnvironment();
 
@@ -205,6 +233,16 @@ export class Renderer3D {
 
   dispose(): void {
     window.removeEventListener("resize", this.onResize);
+    for (const line of this.laneLineMeshes.values()) {
+      this.scene.remove(line);
+      line.geometry.dispose();
+      (line.material as THREE.Material).dispose();
+    }
+    this.laneLineMeshes.clear();
+    this.placementPreviewMesh.geometry.dispose();
+    (this.placementPreviewMesh.material as THREE.Material).dispose();
+    this.coreBuildBufferMesh.geometry.dispose();
+    (this.coreBuildBufferMesh.material as THREE.Material).dispose();
     this.renderer.dispose();
   }
 
@@ -364,7 +402,8 @@ export class Renderer3D {
     this.syncTowerMeshes(state);
     this.syncTrapMeshes(state);
     this.syncProjectileMeshes(state);
-    this.syncBuildNodes(state);
+    this.syncLanePaths(state);
+    this.syncPlacementPreview(state);
     this.syncHazards(state);
 
     this.renderer.render(this.scene, this.camera);
@@ -396,14 +435,14 @@ export class Renderer3D {
       new THREE.OctahedronGeometry(1.5, 0),
       new THREE.MeshStandardMaterial({ color: "#b4e4ff", emissive: "#4aa6ff", emissiveIntensity: 0.45 }),
     );
-    bastionCore.position.set(12, 2.1, 0);
+    bastionCore.position.set(CORE_WORLD_POSITION.x, 2.1, CORE_WORLD_POSITION.z);
     this.scene.add(bastionCore);
 
     const bastionBase = new THREE.Mesh(
       new THREE.CylinderGeometry(2.8, 3.6, 1.4, 10),
       new THREE.MeshStandardMaterial({ color: "#53606e", roughness: 0.8 }),
     );
-    bastionBase.position.set(12, 0.65, 0);
+    bastionBase.position.set(CORE_WORLD_POSITION.x, 0.65, CORE_WORLD_POSITION.z);
     this.scene.add(bastionBase);
   }
 
@@ -646,39 +685,61 @@ export class Renderer3D {
     }
   }
 
-  private syncBuildNodes(state: MutableGameState): void {
-    const seen = new Set<string>();
-    for (const buildNode of state.buildNodes) {
-      seen.add(buildNode.id);
-      let mesh = this.buildNodeMeshes.get(buildNode.id);
-      if (!mesh) {
-        mesh = new THREE.Mesh(
-          new THREE.RingGeometry(0.45, 0.6, 24),
-          new THREE.MeshBasicMaterial({ color: "#4a705e", transparent: true, opacity: 0.7, side: THREE.DoubleSide }),
-        );
-        mesh.rotation.x = -Math.PI / 2;
-        this.scene.add(mesh);
-        this.buildNodeMeshes.set(buildNode.id, mesh);
-      }
-      mesh.position.set(buildNode.position.x, 0.05, buildNode.position.z);
-
-      const material = mesh.material as THREE.MeshBasicMaterial;
-      const selected = state.selectedNodeId === buildNode.id;
-      const occupied = !!buildNode.occupiedBy;
-      material.color.set(selected ? "#f0efaa" : occupied ? "#6d6257" : "#4a705e");
-      material.opacity = state.mode === "build" ? 0.8 : 0.25;
-      mesh.visible = true;
+  private syncLanePaths(state: MutableGameState): void {
+    if (state.currentBiomeIndex === this.activeLaneBiomeIndex) {
+      return;
     }
 
-    for (const [id, mesh] of this.buildNodeMeshes.entries()) {
-      if (seen.has(id)) {
-        continue;
-      }
-      this.scene.remove(mesh);
-      mesh.geometry.dispose();
-      (mesh.material as THREE.Material).dispose();
-      this.buildNodeMeshes.delete(id);
+    for (const laneLine of this.laneLineMeshes.values()) {
+      this.scene.remove(laneLine);
+      laneLine.geometry.dispose();
+      (laneLine.material as THREE.Material).dispose();
     }
+    this.laneLineMeshes.clear();
+
+    const biome = biomeSequence[state.currentBiomeIndex] ?? biomeSequence[biomeSequence.length - 1];
+    if (!biome) {
+      this.activeLaneBiomeIndex = state.currentBiomeIndex;
+      return;
+    }
+
+    for (const lane of biome.lanes) {
+      const geometry = new THREE.BufferGeometry().setFromPoints(
+        lane.points.map((p) => new THREE.Vector3(p.x, 0.04, p.z)),
+      );
+      const line = new THREE.Line(
+        geometry,
+        new THREE.LineBasicMaterial({ color: "#8aa7c2", transparent: true, opacity: 0.4 }),
+      );
+      this.scene.add(line);
+      this.laneLineMeshes.set(lane.id, line);
+    }
+
+    this.activeLaneBiomeIndex = state.currentBiomeIndex;
+  }
+
+  private syncPlacementPreview(state: MutableGameState): void {
+    const buildMode = state.mode === "build";
+    this.placementPreviewMesh.visible = buildMode;
+    this.coreBuildBufferMesh.visible = buildMode;
+    if (!buildMode) {
+      return;
+    }
+
+    this.placementPreviewMesh.position.set(state.placementPreview.position.x, 0.045, state.placementPreview.position.z);
+    const material = this.placementPreviewMesh.material as THREE.MeshBasicMaterial;
+    if (state.placementPreview.canPlace) {
+      material.color.set("#65f2a6");
+      material.opacity = 0.85;
+      return;
+    }
+    if (state.placementPreview.blockReason === "insufficient-gold") {
+      material.color.set("#f7c26c");
+      material.opacity = 0.8;
+      return;
+    }
+    material.color.set("#ff8f84");
+    material.opacity = 0.8;
   }
 
   private syncHazards(state: MutableGameState): void {

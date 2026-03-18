@@ -101,3 +101,88 @@ Original prompt: Implement whole [grim_bastion_td_concept.md](grim_bastion_td_co
     - `output/web-game-look-right-check-fixed/` -> yaw decreased from baseline (camera rotated right in current convention).
     - `output/web-game-look-left-check-fixed/` -> yaw increased from baseline (camera rotated left).
   - No new console/page error artifacts were produced.
+
+## 2026-03-18
+- Implemented control remap and jump behavior update:
+  - `Space` now triggers one-shot jump input.
+  - `ShiftLeft`/`ShiftRight` now trigger one-shot dash input.
+  - Removed hold-to-dash behavior from `Space`.
+- Added arcade hop jump runtime on hero:
+  - jump state fields on hero (`jumpActive`, `jumpElapsed`, `jumpDuration`, `jumpPeakHeight`),
+  - deterministic jump arc via `computeJumpArcHeight(progress, peakHeight)`,
+  - vertical position/velocity updates in `updateHero`, landing snaps back to `y=0`.
+- Preserved dash ability behavior and effects (cooldown/mana/invulnerability/lightning trail).
+- Updated physics sync and automation snapshot:
+  - hero rigid body now follows `hero.position.y`,
+  - `render_game_to_text` now includes `hero.jumpActive` and `hero.jumpProgress`.
+- Updated player-facing control text:
+  - `src/game/ui/HudUI.ts`,
+  - `README.md`,
+  - `docs/gameplay/input-and-targeting.md`.
+- Added tests:
+  - input mapping test for `Space -> jump` and `ShiftLeft/ShiftRight -> dash` (and no `Space -> dash`),
+  - gameplay rules test for jump arc shape (start/end zero, peak at midpoint, symmetry).
+- Verification:
+  - `npm test` passed (10 files, 39 tests).
+  - `npm run build` passed.
+  - Playwright client run for space-jump smoke artifacts:
+    - `output/web-game-space-jump-check/shot-0.png`
+    - `output/web-game-space-jump-check/state-0.json`
+    - no `errors-0.json` produced.
+  - Deterministic direct Playwright control check artifacts:
+    - `output/web-game-space-shift-direct-check/result.json`
+    - `output/web-game-space-shift-direct-check/shot-0.png`
+    - results confirmed jump airborne state after `Space` and dash displacement + cooldown after `ShiftLeft`.
+- 2026-03-18 dash feel pass:
+  - Replaced instant dash teleport with short timed dash motion (`DASH_MOTION_DURATION = 0.12`) using per-tick interpolation.
+  - Added runtime dash motion state (`dashMotion`) and completion hook for dash-lightning trail application at dash end.
+  - Preserved dash cooldown/mana/invulnerability behavior while smoothing spatial movement.
+  - Cleared dash runtime state on run reset and hero death to avoid stale motion.
+- Dash smoothing verification:
+  - `npm test` passed (10 files, 39 tests).
+  - `npm run build` passed.
+  - Deterministic probe artifacts:
+    - `output/web-game-dash-smooth-check/result.json`
+    - `output/web-game-dash-smooth-check/shot-0.png`
+  - Result confirms non-teleport dash: first-frame delta (~1.53 units) is smaller than total dash distance (5.5 units), indicating multi-frame movement.
+  - Playwright client smoke artifacts:
+    - `output/web-game-dash-smooth-client-check/shot-0.png`
+    - `output/web-game-dash-smooth-client-check/state-0.json`
+    - no `errors-0.json` produced.
+- 2026-03-18 dash tuning update:
+  - Increased `DASH_MOTION_DURATION` from `0.12` to `0.18` in `src/game/GameApp.ts` (50% slower dash by travel time).
+  - Re-validated with `npm test` and `npm run build` (both passing).
+  - Playwright smoke run completed with artifacts in `output/web-game-dash-slower-client-check/` and no errors file produced.
+
+## 2026-03-18
+- Implemented map/UI rework for non-isometric reticle build flow:
+  - enemies now route into core endpoint by lane design and runtime reach-zone resolution,
+  - freeform placement for towers + traps at reticle ground point (no node dependency),
+  - placement constraints added: gold check, overlap blocking, core no-build buffer,
+  - right-click now sells nearest defense in reticle sell radius.
+- Added shared gameplay constants in `src/game/constants.ts` and pure placement helpers in `src/game/systems/buildPlacement.ts`.
+- Updated runtime state/types:
+  - replaced node-selection runtime fields with placement preview metadata (`position`, `canPlace`, `blockReason`, `sellTarget`),
+  - automation snapshot now includes placement preview.
+- Renderer/HUD updates:
+  - removed build-node ring rendering,
+  - added lane path line overlays, reticle placement ring color states, and core buffer ring,
+  - updated HUD controls/mode/tips text and minimap markers for new placement flow.
+- Docs updates in `/docs/gameplay`:
+  - `input-and-targeting.md`
+  - `defenses-towers-and-traps.md`
+  - `biomes-and-encounter-design.md`
+  - `enemies-waves-and-bosses.md`
+  - `hud-and-feedback.md`
+- Added tests:
+  - `tests/build-placement.test.ts` (freeform validity, overlap/core/gold rejections, sell target resolution, nearest lane)
+  - `tests/biome-lanes.test.ts` (all lane endpoints converge to core)
+  - updated `tests/reticle-frame.test.ts` and `tests/testState.ts` for placement-preview model.
+- Verification:
+  - `npm test` passed (12 files, 47 tests).
+  - `npm run build` passed.
+  - Playwright artifacts captured:
+    - `output/web-game-map-ui-rework/`
+    - `output/web-game-map-ui-rework-build2/`
+    - `output/web-game-map-ui-rework-overlap/`
+  - Confirmed overlap invalid-state feedback via `state-0.json` (`blockReason: "overlap"`, populated `sellTarget`) and visual ring state in screenshot.

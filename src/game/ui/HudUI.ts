@@ -1,5 +1,6 @@
 import { biomeSequence } from "../data/biomes";
 import { towerArchetypes, trapArchetypes } from "../data/archetypes";
+import { CORE_BUILD_BUFFER_RADIUS, CORE_WORLD_POSITION } from "../constants";
 import type { MutableGameState, TowerType, TrapType, UpgradeDefinition, Vec3 } from "../types";
 
 export interface HudEvents {
@@ -13,6 +14,19 @@ export interface HudEvents {
 
 function formatNumber(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+
+function formatBlockReason(reason: MutableGameState["placementPreview"]["blockReason"]): string {
+  if (!reason) {
+    return "ready";
+  }
+  if (reason === "insufficient-gold") {
+    return "insufficient gold";
+  }
+  if (reason === "core-buffer") {
+    return "too close to core";
+  }
+  return "overlaps defense";
 }
 
 export class HudUI {
@@ -54,7 +68,8 @@ export class HudUI {
         <div class="hud-panel mode" id="mode"></div>
         <div class="hud-panel controls">
           <h3>Controls</h3>
-          <p>Mouse look (locked), center crosshair aim, LMB fire, Q/E abilities.</p>
+          <p>Mouse look (locked), center crosshair aim, LMB fire, Q/E abilities, Shift dash, Space jump.</p>
+          <p>Build mode: LMB place selected defense at reticle, RMB sell nearest defense.</p>
           <p>B toggle build, N start wave, 1/2/3 choose upgrades.</p>
           <p>1-8 select build, [ / ] cycle build, R weapon, L loadout, F fullscreen.</p>
         </div>
@@ -138,7 +153,7 @@ export class HudUI {
     this.modeEl.innerHTML = [
       `<strong>Mode</strong>`,
       state.mode,
-      state.mode === "build" ? "Place defenses on highlighted nodes." : "Fight and stabilize lanes.",
+      state.mode === "build" ? "Place defenses at reticle position (freeform)." : "Fight and stabilize lanes.",
     ].join("<br />");
 
     this.tipsEl.innerHTML = [
@@ -147,8 +162,12 @@ export class HudUI {
       `Damage: ${formatNumber(state.runStats.damageDealt)}`,
       `Gold spent: ${formatNumber(state.runStats.goldSpent)}`,
       `Owned upgrades: ${state.ownedUpgradeIds.size}`,
-      state.selectedNodeId ? `Selected Node: ${state.selectedNodeId}` : "Selected Node: none",
       state.selectedBuildType ? `Build selection: ${state.selectedBuildType}` : "Build selection: none",
+      `Reticle build pos: ${state.placementPreview.position.x.toFixed(1)}, ${state.placementPreview.position.z.toFixed(1)}`,
+      `Placement: ${state.placementPreview.canPlace ? "valid" : `blocked (${formatBlockReason(state.placementPreview.blockReason)})`}`,
+      state.placementPreview.sellTarget
+        ? `Sell target: ${state.placementPreview.sellTarget.kind} ${state.placementPreview.sellTarget.id}`
+        : "Sell target: none",
     ].join("<br />");
 
     this.renderUpgradePanel(state);
@@ -246,6 +265,13 @@ export class HudUI {
       ctx.stroke();
     }
 
+    const core = project(CORE_WORLD_POSITION);
+    ctx.strokeStyle = "rgba(144, 213, 255, 0.45)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(core.x, core.y, CORE_BUILD_BUFFER_RADIUS * mapScale, 0, Math.PI * 2);
+    ctx.stroke();
+
     ctx.fillStyle = "#4cf8c6";
     const hero = project(state.hero.position);
     ctx.beginPath();
@@ -268,10 +294,17 @@ export class HudUI {
     }
 
     ctx.fillStyle = "#8fd5ff";
-    const core = project({ x: 12, y: 0, z: 0 });
     ctx.beginPath();
     ctx.arc(core.x, core.y, 5, 0, Math.PI * 2);
     ctx.fill();
+
+    if (state.mode === "build") {
+      const buildPos = project(state.placementPreview.position);
+      ctx.fillStyle = state.placementPreview.canPlace ? "#65f2a6" : "#ff8b7a";
+      ctx.beginPath();
+      ctx.arc(buildPos.x, buildPos.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   private query<T extends HTMLElement = HTMLElement>(selector: string): T {

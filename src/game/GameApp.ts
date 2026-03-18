@@ -12,10 +12,23 @@ import {
   weaponArchetypes,
 } from "./data/archetypes";
 import { biomeSequence } from "./data/biomes";
+import {
+  CORE_BUILD_BUFFER_RADIUS,
+  CORE_REACH_RADIUS,
+  CORE_WORLD_POSITION,
+  DEFENSE_MIN_SPACING,
+  SELL_TARGET_RADIUS,
+} from "./constants";
 import { Renderer3D } from "./render/Renderer3D";
 import { InputController, type InputState } from "./systems/InputController";
 import {
+  findSellTarget,
+  resolveNearestLaneId,
+  validatePlacement,
+} from "./systems/buildPlacement";
+import {
   canToggleCombatView,
+  computeJumpArcHeight,
   computeEnemyMoveSpeed,
   computeWitchAuraMultiplier,
   nextCombatViewMode,
@@ -31,6 +44,7 @@ import { UpgradeSystem } from "./systems/UpgradeSystem";
 import { WaveDirector } from "./systems/WaveDirector";
 import type {
   AbilityType,
+  BuildPlacementPreview,
   EnemyState,
   EnemyType,
   MutableGameState,
@@ -66,6 +80,9 @@ const LANE_ECHO_CHANCE = 0.22;
 const LANE_ECHO_DAMAGE_MULTIPLIER = 0.55;
 const FINAL_STAND_THRESHOLD = 0.3;
 const FINAL_STAND_MULTIPLIER = 1.22;
+const JUMP_DURATION = 0.42;
+const JUMP_PEAK_HEIGHT = 1.05;
+const DASH_MOTION_DURATION = 0.3;
 const BUILD_HOTKEY_ORDER: Array<TowerType | TrapType> = [
   "ballista",
   "frost-obelisk",
@@ -77,6 +94,15 @@ const BUILD_HOTKEY_ORDER: Array<TowerType | TrapType> = [
   "flame-trap",
 ];
 
+function createEmptyPlacementPreview(position: Vec3 = v3()): BuildPlacementPreview {
+  return {
+    position: copyVec3(position),
+    canPlace: false,
+    blockReason: null,
+    sellTarget: null,
+  };
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -86,6 +112,13 @@ interface PhysicsHandles {
   heroBody: RAPIER.RigidBody;
   heroCollider: RAPIER.Collider;
   enemyBodies: Map<string, RAPIER.RigidBody>;
+}
+
+interface DashMotionState {
+  remaining: number;
+  velocity: Vec3;
+  target: Vec3;
+  lightningTrail: boolean;
 }
 
 export class GameApp {
@@ -131,6 +164,10 @@ export class GameApp {
 
   private loadoutCycle = 0;
 
+  private dashMotion: DashMotionState | null = null;
+
+  private pendingDashTrailPulse = false;
+
   constructor(canvas: HTMLCanvasElement, hudRoot: HTMLElement, renderer: Renderer3D, physics: PhysicsHandles) {
     this.canvas = canvas;
     this.renderer = renderer;
@@ -143,7 +180,7 @@ export class GameApp {
     this.state = this.createInitialState();
     this.renderer.initializeCameraRig(this.state.hero.position, this.state.hero.facing);
     this.currentInput = this.sampleInput();
-    this.reticleFrame = buildReticleFrameData(v3(), v3(), this.state.buildNodes);
+    this.reticleFrame = buildReticleFrameData(v3(), v3());
 
     this.waveDirector = new WaveDirector({
       spawnEnemy: (enemyType, laneId, isElite, isBoss) => this.spawnEnemy(enemyType, laneId, isElite, isBoss),
@@ -229,7 +266,6 @@ export class GameApp {
   }
 
   private createInitialState(): MutableGameState {
-    const biome = biomeSequence[0]!;
     return {
       mode: "menu",
       time: 0,
@@ -267,15 +303,18 @@ export class GameApp {
           "overcharge-aura": 0,
         },
         invulnerabilityTimer: 0,
+        jumpActive: false,
+        jumpElapsed: 0,
+        jumpDuration: JUMP_DURATION,
+        jumpPeakHeight: JUMP_PEAK_HEIGHT,
       },
       enemies: [],
       towers: [],
       traps: [],
       projectiles: [],
       floatingTexts: [],
-      buildNodes: biome.buildNodes.map((node) => ({ ...node, occupiedBy: null })),
+      placementPreview: createEmptyPlacementPreview(v3(8, 0, 0)),
       selectedBuildType: "ballista",
-      selectedNodeId: null,
       selectedTargetId: null,
       currentBiomeIndex: 0,
       wave: {
@@ -332,8 +371,9 @@ export class GameApp {
     this.state = fresh;
     this.pendingOverchargeTimer = 0;
     this.loadoutCycle = 0;
+    this.dashMotion = null;
+    this.pendingDashTrailPulse = false;
     this.renderer.initializeCameraRig(this.state.hero.position, this.state.hero.facing);
-    this.syncBiomeNodes();
     this.updateReticleFrame(FIXED_DT);
     this.syncHeroPhysics();
     this.hud.update(this.state);
@@ -364,7 +404,6 @@ export class GameApp {
 
     if (this.state.mode === "between-biomes") {
       this.state.mode = "build";
-      this.syncBiomeNodes();
     }
 
     if (this.state.mode === "build") {
@@ -418,11 +457,11 @@ export class GameApp {
     }
 
     if (this.state.mode === "build" && input.firePrimary) {
-      this.tryPlaceAtSelection();
+      this.tryPlaceAtReticle();
     }
 
     if (this.state.mode === "build" && input.fireSecondary) {
-      this.sellAtSelection();
+      this.sellAtReticle();
     }
   }
 
@@ -481,11 +520,16 @@ export class GameApp {
 
   private updateHero(dt: number, input: InputState): void {
     if (!this.state.hero.alive) {
+      this.dashMotion = null;
+      this.pendingDashTrailPulse = false;
       this.state.hero.respawnTimer -= dt;
       if (this.state.hero.respawnTimer <= 0) {
         this.state.hero.alive = true;
         this.state.hero.stats.health = this.state.hero.stats.maxHealth * 0.6;
         this.state.hero.position = v3(8, 0, 0);
+        this.state.hero.velocity = v3();
+        this.state.hero.jumpActive = false;
+        this.state.hero.jumpElapsed = 0;
       }
       return;
     }
@@ -503,11 +547,42 @@ export class GameApp {
       ),
     );
     const speed = this.state.hero.stats.moveSpeed * this.state.modifiers.heroMoveSpeedMultiplier * this.finalStandMultiplier();
-    this.state.hero.velocity = mul(inputDir, speed);
-    this.state.hero.position = add(this.state.hero.position, mul(this.state.hero.velocity, dt));
+    const previousPosition = copyVec3(this.state.hero.position);
+    if (this.dashMotion) {
+      const dashStep = this.advanceDashMotion(dt);
+      this.state.hero.position = add(this.state.hero.position, dashStep);
+    } else {
+      const moveVelocity = mul(inputDir, speed);
+      this.state.hero.position = add(this.state.hero.position, mul(moveVelocity, dt));
+    }
 
     this.state.hero.position.x = clamp(this.state.hero.position.x, -28, 16);
     this.state.hero.position.z = clamp(this.state.hero.position.z, -19, 19);
+    if (this.pendingDashTrailPulse) {
+      this.pendingDashTrailPulse = false;
+      this.applyDashLightningTrail();
+    }
+    if (input.jump && !this.state.hero.jumpActive) {
+      this.state.hero.jumpActive = true;
+      this.state.hero.jumpElapsed = 0;
+    }
+    if (this.state.hero.jumpActive) {
+      this.state.hero.jumpElapsed += dt;
+      const progress = this.state.hero.jumpDuration > 0 ? this.state.hero.jumpElapsed / this.state.hero.jumpDuration : 1;
+      if (progress >= 1) {
+        this.state.hero.jumpActive = false;
+        this.state.hero.jumpElapsed = this.state.hero.jumpDuration;
+        this.state.hero.position.y = 0;
+      } else {
+        this.state.hero.position.y = computeJumpArcHeight(progress, this.state.hero.jumpPeakHeight);
+      }
+    } else {
+      this.state.hero.position.y = 0;
+    }
+    const invDt = 1 / Math.max(dt, 1e-6);
+    this.state.hero.velocity.x = (this.state.hero.position.x - previousPosition.x) * invDt;
+    this.state.hero.velocity.y = (this.state.hero.position.y - previousPosition.y) * invDt;
+    this.state.hero.velocity.z = (this.state.hero.position.z - previousPosition.z) * invDt;
 
     const reticle = this.reticleFrame.aimPoint3D;
     const facing = normalize(sub(reticle, this.state.hero.position));
@@ -609,6 +684,50 @@ export class GameApp {
       this.tryCastAbility(ability2, dt);
     }
   }
+
+  private advanceDashMotion(dt: number): Vec3 {
+    if (!this.dashMotion) {
+      return v3();
+    }
+
+    const stepTime = Math.min(dt, this.dashMotion.remaining);
+    this.dashMotion.remaining = Math.max(0, this.dashMotion.remaining - stepTime);
+
+    let step = mul(this.dashMotion.velocity, stepTime);
+    if (this.dashMotion.remaining <= 0) {
+      const expectedEndX = this.state.hero.position.x + step.x;
+      const expectedEndZ = this.state.hero.position.z + step.z;
+      step = v3(
+        step.x + (this.dashMotion.target.x - expectedEndX),
+        0,
+        step.z + (this.dashMotion.target.z - expectedEndZ),
+      );
+      if (this.dashMotion.lightningTrail) {
+        this.pendingDashTrailPulse = true;
+      }
+      this.dashMotion = null;
+    }
+
+    return step;
+  }
+
+  private applyDashLightningTrail(): void {
+    for (const enemy of this.state.enemies) {
+      if (enemy.isDead) {
+        continue;
+      }
+      if (distance(enemy.position, this.state.hero.position) <= 3.2) {
+        this.statusSystem.damageEnemy(this.state, enemy, 18, "dash-lightning");
+        this.statusSystem.addStatus(enemy, {
+          type: "shock",
+          intensity: 1,
+          duration: 2,
+          sourceId: "dash-lightning",
+        });
+      }
+    }
+  }
+
   private tryCastAbility(ability: AbilityType, dt: number): void {
     const data = abilityArchetypes[ability];
     if (!data || this.state.hero.abilityCooldowns[ability] > 0 || this.state.resources.mana < data.manaCost || !this.state.hero.alive) {
@@ -628,27 +747,32 @@ export class GameApp {
     switch (ability) {
       case "dash": {
         const dashDistance = 5.5;
-        const destination = add(this.state.hero.position, mul(this.state.hero.facing, dashDistance));
-        this.state.hero.position.x = clamp(destination.x, -28, 16);
-        this.state.hero.position.z = clamp(destination.z, -19, 19);
-        this.state.hero.invulnerabilityTimer = 0.35;
+        const currentPosition = copyVec3(this.state.hero.position);
+        const rawDestination = add(currentPosition, mul(this.state.hero.facing, dashDistance));
+        const destination = v3(
+          clamp(rawDestination.x, -28, 16),
+          currentPosition.y,
+          clamp(rawDestination.z, -19, 19),
+        );
+        const dashVector = sub(destination, currentPosition);
+        const hasLightningTrail = this.state.ownedUpgradeIds.has("hero-dash-lightning-trail");
 
-        if (this.state.ownedUpgradeIds.has("hero-dash-lightning-trail")) {
-          for (const enemy of this.state.enemies) {
-            if (enemy.isDead) {
-              continue;
-            }
-            if (distance(enemy.position, this.state.hero.position) <= 3.2) {
-              this.statusSystem.damageEnemy(this.state, enemy, 18, "dash-lightning");
-              this.statusSystem.addStatus(enemy, {
-                type: "shock",
-                intensity: 1,
-                duration: 2,
-                sourceId: "dash-lightning",
-              });
-            }
+        if (distance2D(destination, currentPosition) <= 0.001) {
+          this.state.hero.position.x = destination.x;
+          this.state.hero.position.z = destination.z;
+          if (hasLightningTrail) {
+            this.applyDashLightningTrail();
           }
+        } else {
+          const speed = DASH_MOTION_DURATION > 0 ? 1 / DASH_MOTION_DURATION : 0;
+          this.dashMotion = {
+            remaining: DASH_MOTION_DURATION,
+            velocity: mul(dashVector, speed),
+            target: destination,
+            lightningTrail: hasLightningTrail,
+          };
         }
+        this.state.hero.invulnerabilityTimer = Math.max(this.state.hero.invulnerabilityTimer, 0.35);
         break;
       }
       case "explosive-rune": {
@@ -1054,7 +1178,8 @@ export class GameApp {
 
       const lane = laneMap.get(enemy.laneId) ?? biome.lanes[0]!;
       const path = enemy.isFlying ? lane.flyingPoints : lane.points;
-      const targetPoint = path[Math.min(path.length - 1, enemy.pathIndex + 1)] ?? path[path.length - 1]!;
+      const corePoint = path[path.length - 1] ?? CORE_WORLD_POSITION;
+      const targetPoint = path[Math.min(path.length - 1, enemy.pathIndex + 1)] ?? corePoint;
       const toTarget = sub(targetPoint, enemy.position);
       const direction = normalize(v3(toTarget.x, 0, toTarget.z));
       let nearbyWitches = 0;
@@ -1076,7 +1201,8 @@ export class GameApp {
         enemy.pathProgress += 1;
       }
 
-      if (enemy.pathIndex >= path.length - 1) {
+      const reachedCore = distance2D(enemy.position, corePoint) <= CORE_REACH_RADIUS;
+      if (reachedCore) {
         this.hitCore(enemy.stats.contactDamage, enemy);
         enemy.isDead = true;
         enemy.deathOutcome = "escaped";
@@ -1475,7 +1601,6 @@ export class GameApp {
     this.state.resources.essence += 15;
     this.state.hero.stats.health = Math.min(this.state.hero.stats.maxHealth, this.state.hero.stats.health + 60);
     this.state.mode = "between-biomes";
-    this.syncBiomeNodes();
   }
 
   private handleRunCompleted(): void {
@@ -1507,16 +1632,34 @@ export class GameApp {
     this.save = updated;
   }
 
-  private syncBiomeNodes(): void {
-    const biome = biomeSequence[Math.min(this.state.currentBiomeIndex, biomeSequence.length - 1)]!;
-    this.state.buildNodes = biome.buildNodes.map((node) => ({ ...node, occupiedBy: null }));
-  }
-
   private updateReticleFrame(dt: number): void {
     const aimSample = this.renderer.sampleAimTarget();
-    this.reticleFrame = buildReticleFrameData(aimSample.aimPoint3D, aimSample.groundPoint, this.state.buildNodes);
-    this.state.selectedNodeId = this.reticleFrame.selectedNodeId;
+    this.reticleFrame = buildReticleFrameData(aimSample.aimPoint3D, aimSample.groundPoint);
+    this.state.placementPreview = this.computePlacementPreview(this.reticleFrame.placementPoint);
     this.renderer.setReticle(this.reticleFrame.aimPoint3D, dt);
+  }
+
+  private computePlacementPreview(position: Vec3): BuildPlacementPreview {
+    const cost = this.currentBuildCost();
+    const validation = validatePlacement(
+      position,
+      this.state.resources.gold,
+      cost,
+      this.state.towers,
+      this.state.traps,
+      CORE_WORLD_POSITION,
+      CORE_BUILD_BUFFER_RADIUS,
+      DEFENSE_MIN_SPACING,
+    );
+
+    const sellTarget = findSellTarget(position, this.state.towers, this.state.traps, SELL_TARGET_RADIUS);
+
+    return {
+      position: copyVec3(position),
+      canPlace: validation.canPlace,
+      blockReason: validation.blockReason,
+      sellTarget: sellTarget ? { id: sellTarget.id, kind: sellTarget.kind } : null,
+    };
   }
 
   private selectBuildByIndex(index: number): void {
@@ -1537,23 +1680,38 @@ export class GameApp {
     this.state.selectedBuildType = BUILD_HOTKEY_ORDER[next]!;
   }
 
-  private tryPlaceAtSelection(): void {
-    const node = this.state.buildNodes.find((entry) => entry.id === this.state.selectedNodeId);
-    if (!node || node.occupiedBy) {
+  private currentBuildCost(): number {
+    if (this.isTowerType(this.state.selectedBuildType)) {
+      const towerType = this.state.selectedBuildType as TowerType;
+      const archetype = towerArchetypes[towerType];
+      return Math.round(archetype.baseCost * this.state.modifiers.towerCostMultiplier);
+    }
+    const trapType = this.state.selectedBuildType as TrapType;
+    const archetype = trapArchetypes[trapType];
+    return Math.round(archetype.baseCost * this.state.modifiers.trapCostMultiplier);
+  }
+
+  private resolvePlacementLaneId(position: Vec3): string {
+    const biome = biomeSequence[this.state.currentBiomeIndex] ?? biomeSequence[biomeSequence.length - 1]!;
+    return resolveNearestLaneId(position, biome.lanes);
+  }
+
+  private tryPlaceAtReticle(): void {
+    const placementPoint = this.reticleFrame.placementPoint;
+    const preview = this.computePlacementPreview(placementPoint);
+    this.state.placementPreview = preview;
+    if (!preview.canPlace) {
       return;
     }
 
-    const isTower = node.allowsTower && this.isTowerType(this.state.selectedBuildType);
-    const isTrap = node.allowsTrap && this.isTrapType(this.state.selectedBuildType);
-    if (!isTower && !isTrap) {
-      return;
-    }
+    const laneId = this.resolvePlacementLaneId(placementPoint);
 
-    if (isTower) {
+    if (this.isTowerType(this.state.selectedBuildType)) {
       const towerType = this.state.selectedBuildType as TowerType;
       const archetype = towerArchetypes[towerType];
       const cost = Math.round(archetype.baseCost * this.state.modifiers.towerCostMultiplier);
       if (this.state.resources.gold < cost) {
+        this.state.placementPreview = this.computePlacementPreview(placementPoint);
         return;
       }
       this.state.resources.gold -= cost;
@@ -1561,8 +1719,8 @@ export class GameApp {
       const tower: TowerState = {
         id: this.nextId(towerType),
         type: towerType,
-        position: copyVec3(node.position),
-        laneId: node.laneId,
+        position: copyVec3(placementPoint),
+        laneId,
         level: 1,
         attackTimer: 0,
         shotsFired: 0,
@@ -1573,7 +1731,7 @@ export class GameApp {
         maxHealth: 120,
       };
       this.state.towers.push(tower);
-      node.occupiedBy = tower.id;
+      this.state.placementPreview = this.computePlacementPreview(placementPoint);
       return;
     }
 
@@ -1581,6 +1739,7 @@ export class GameApp {
     const archetype = trapArchetypes[trapType];
     const cost = Math.round(archetype.baseCost * this.state.modifiers.trapCostMultiplier);
     if (this.state.resources.gold < cost) {
+      this.state.placementPreview = this.computePlacementPreview(placementPoint);
       return;
     }
     this.state.resources.gold -= cost;
@@ -1589,25 +1748,32 @@ export class GameApp {
     const trap: TrapState = {
       id: this.nextId(trapType),
       type: trapType,
-      position: copyVec3(node.position),
-      laneId: node.laneId,
+      position: copyVec3(placementPoint),
+      laneId,
       cooldown: 0,
       triggerRadius: archetype.triggerRadius,
       upgrades: [],
       activeZoneTimer: 0,
     };
     this.state.traps.push(trap);
-    node.occupiedBy = trap.id;
+    this.state.placementPreview = this.computePlacementPreview(placementPoint);
   }
 
-  private sellAtSelection(): void {
-    const node = this.state.buildNodes.find((entry) => entry.id === this.state.selectedNodeId);
-    if (!node || !node.occupiedBy) {
+  private sellAtReticle(): void {
+    const placementPoint = this.reticleFrame.placementPoint;
+    const sellTarget = findSellTarget(placementPoint, this.state.towers, this.state.traps, SELL_TARGET_RADIUS);
+    if (!sellTarget) {
+      this.state.placementPreview = this.computePlacementPreview(placementPoint);
       return;
     }
 
-    const towerIndex = this.state.towers.findIndex((tower) => tower.id === node.occupiedBy);
-    if (towerIndex >= 0) {
+    if (sellTarget.kind === "tower") {
+      const towerIndex = this.state.towers.findIndex((tower) => tower.id === sellTarget.id);
+      if (towerIndex < 0) {
+        this.state.placementPreview = this.computePlacementPreview(placementPoint);
+        return;
+      }
+
       const tower = this.state.towers[towerIndex]!;
       const archetype = towerArchetypes[tower.type];
       let refund = archetype.baseCost * archetype.sellRefundFactor;
@@ -1616,11 +1782,11 @@ export class GameApp {
       }
       this.state.resources.gold += Math.round(refund);
       this.state.towers.splice(towerIndex, 1);
-      node.occupiedBy = null;
+      this.state.placementPreview = this.computePlacementPreview(placementPoint);
       return;
     }
 
-    const trapIndex = this.state.traps.findIndex((trap) => trap.id === node.occupiedBy);
+    const trapIndex = this.state.traps.findIndex((trap) => trap.id === sellTarget.id);
     if (trapIndex >= 0) {
       const trap = this.state.traps[trapIndex]!;
       const archetype = trapArchetypes[trap.type];
@@ -1630,16 +1796,12 @@ export class GameApp {
       }
       this.state.resources.gold += Math.round(refund);
       this.state.traps.splice(trapIndex, 1);
-      node.occupiedBy = null;
+      this.state.placementPreview = this.computePlacementPreview(placementPoint);
     }
   }
 
   private isTowerType(value: TowerType | TrapType): value is TowerType {
     return value in towerArchetypes;
-  }
-
-  private isTrapType(value: TowerType | TrapType): value is TrapType {
-    return value in trapArchetypes;
   }
 
   private cycleWeapon(): void {
@@ -1691,7 +1853,7 @@ export class GameApp {
     this.physics.heroBody.setTranslation(
       {
         x: this.state.hero.position.x,
-        y: 0.6,
+        y: 0.6 + this.state.hero.position.y,
         z: this.state.hero.position.z,
       },
       true,
@@ -1735,6 +1897,8 @@ export class GameApp {
           maxHealth: this.state.hero.stats.maxHealth,
           weapon: this.state.hero.loadout.weapon,
           abilityCooldowns: { ...this.state.hero.abilityCooldowns },
+          jumpActive: this.state.hero.jumpActive,
+          jumpProgress: this.state.hero.jumpDuration > 0 ? clamp(this.state.hero.jumpElapsed / this.state.hero.jumpDuration, 0, 1) : 0,
         },
         enemies: this.state.enemies
           .filter((enemy) => !enemy.isDead)
@@ -1763,6 +1927,17 @@ export class GameApp {
           position: copyVec3(trap.position),
           cooldown: trap.cooldown,
         })),
+        placementPreview: {
+          position: copyVec3(this.state.placementPreview.position),
+          canPlace: this.state.placementPreview.canPlace,
+          blockReason: this.state.placementPreview.blockReason,
+          sellTarget: this.state.placementPreview.sellTarget
+            ? {
+                id: this.state.placementPreview.sellTarget.id,
+                kind: this.state.placementPreview.sellTarget.kind,
+              }
+            : null,
+        },
         camera: {
           position: camera.position,
           focus: camera.focus,
