@@ -14,6 +14,15 @@ import {
 import { biomeSequence } from "./data/biomes";
 import { Renderer3D } from "./render/Renderer3D";
 import { InputController, type InputState } from "./systems/InputController";
+import {
+  canToggleCombatView,
+  computeEnemyMoveSpeed,
+  computeWitchAuraMultiplier,
+  nextCombatViewMode,
+  resolveFinalStandState,
+  shouldTriggerLaneEcho,
+  shouldAwardEnemyRewards,
+} from "./systems/gameplayRules";
 import { buildReticleFrameData, type ReticleFrameData } from "./systems/reticleFrame";
 import { loadSave, patchSave } from "./systems/SaveSystem";
 import { StatusSystem } from "./systems/StatusSystem";
@@ -52,6 +61,10 @@ import { HudUI } from "./ui/HudUI";
 const FIXED_DT = 1 / 60;
 const MAX_FRAME = 1 / 20;
 const MAX_MANA = 100;
+const LANE_ECHO_CHANCE = 0.22;
+const LANE_ECHO_DAMAGE_MULTIPLIER = 0.55;
+const FINAL_STAND_THRESHOLD = 0.3;
+const FINAL_STAND_MULTIPLIER = 1.22;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -130,7 +143,7 @@ export class GameApp {
     this.hud = new HudUI(hudRoot, {
       onStartRun: () => this.startRun(),
       onStartWave: () => this.startWave(),
-      onToggleBuild: () => this.toggleBuildMode(),
+      onToggleBuild: () => this.requestCombatViewToggle(),
       onSelectBuild: (type) => {
         this.state.selectedBuildType = type;
       },
@@ -345,14 +358,8 @@ export class GameApp {
     }
   }
 
-  private toggleBuildMode(): void {
-    if (this.state.mode === "wave") {
-      this.state.mode = "build";
-      return;
-    }
-    if (this.state.mode === "build") {
-      this.state.mode = this.state.wave.active ? "wave" : "build";
-    }
+  private requestCombatViewToggle(): void {
+    this.state.mode = nextCombatViewMode(this.state.mode, this.state.wave.active);
   }
 
   private handleGlobalInput(input: InputState): void {
@@ -368,8 +375,8 @@ export class GameApp {
       this.startWave();
     }
 
-    if (input.toggleBuild && this.state.mode !== "upgrade") {
-      this.state.mode = this.state.mode === "build" ? "wave" : "build";
+    if (input.toggleBuild && canToggleCombatView(this.state.mode, this.state.wave.active)) {
+      this.requestCombatViewToggle();
     }
 
     if (input.cycleWeapon) {
@@ -407,7 +414,7 @@ export class GameApp {
     this.applyHazards(dt);
     this.cleanupDeadEnemies();
 
-    if (this.state.mode === "wave") {
+    if (this.state.wave.active) {
       this.waveDirector.update(this.state, dt);
     }
 
@@ -435,6 +442,17 @@ export class GameApp {
     this.state.resources.mana = clamp(this.state.resources.mana + dt * 2.1 * regenBoost, 0, MAX_MANA);
   }
 
+  private finalStandMultiplier(): number {
+    const snapshot = resolveFinalStandState(
+      this.state.baseCoreHealth,
+      this.state.baseCoreMaxHealth,
+      this.state.ownedUpgradeIds.has("wild-final-stand"),
+      FINAL_STAND_THRESHOLD,
+      FINAL_STAND_MULTIPLIER,
+    );
+    return snapshot.multiplier;
+  }
+
   private updateHero(dt: number, input: InputState): void {
     if (!this.state.hero.alive) {
       this.state.hero.respawnTimer -= dt;
@@ -452,7 +470,7 @@ export class GameApp {
     });
 
     const inputDir = normalize(v3(input.moveX, 0, input.moveZ));
-    const speed = this.state.hero.stats.moveSpeed * this.state.modifiers.heroMoveSpeedMultiplier;
+    const speed = this.state.hero.stats.moveSpeed * this.state.modifiers.heroMoveSpeedMultiplier * this.finalStandMultiplier();
     this.state.hero.velocity = mul(inputDir, speed);
     this.state.hero.position = add(this.state.hero.position, mul(this.state.hero.velocity, dt));
 
@@ -474,12 +492,14 @@ export class GameApp {
   private heroAttack(reticle: Vec3): void {
     const weapon = this.state.hero.loadout.weapon;
     const weaponData = weaponArchetypes[weapon];
-    const attackSpeed = this.state.hero.stats.attackSpeed * this.state.modifiers.heroAttackSpeedMultiplier;
+    const finalStandMultiplier = this.finalStandMultiplier();
+    const attackSpeed = this.state.hero.stats.attackSpeed * this.state.modifiers.heroAttackSpeedMultiplier * finalStandMultiplier;
     this.state.hero.attackCooldown = Math.max(0.04, 1 / attackSpeed);
 
     const crit = this.rng.next() < this.state.hero.stats.critChance;
     const critMultiplier = crit ? 1.8 : 1;
-    const baseDamage = this.state.hero.stats.attackDamage * weaponData.damageMultiplier * this.state.modifiers.heroDamageMultiplier * critMultiplier;
+    const baseDamage =
+      this.state.hero.stats.attackDamage * weaponData.damageMultiplier * this.state.modifiers.heroDamageMultiplier * finalStandMultiplier * critMultiplier;
 
     const target = this.findSoftLockTarget(reticle, weaponData.range);
     if (weapon === "arc-gauntlet") {
@@ -702,8 +722,14 @@ export class GameApp {
       }
 
       const stats = tower.stats;
+      const finalStandMultiplier = this.finalStandMultiplier();
       const overchargeMultiplier = this.pendingOverchargeTimer > 0 ? 1.25 : 1;
-      const fireRate = stats.fireRate * this.state.modifiers.towerAttackSpeedMultiplier * tower.buffMultiplier * overchargeMultiplier;
+      const fireRate =
+        stats.fireRate *
+        this.state.modifiers.towerAttackSpeedMultiplier *
+        tower.buffMultiplier *
+        overchargeMultiplier *
+        finalStandMultiplier;
       tower.attackTimer = fireRate > 0 ? 1 / fireRate : 999;
 
       const range = stats.range * this.state.modifiers.towerRangeMultiplier * (1 + (this.state.ownedUpgradeIds.has("shrine-aura-expansion") ? 0.05 : 0));
@@ -712,7 +738,8 @@ export class GameApp {
         continue;
       }
 
-      const baseDamage = stats.damage * this.state.modifiers.towerDamageMultiplier * tower.buffMultiplier * overchargeMultiplier;
+      const baseDamage =
+        stats.damage * this.state.modifiers.towerDamageMultiplier * tower.buffMultiplier * overchargeMultiplier * finalStandMultiplier;
 
       if (tower.type === "ballista") {
         const eliteBonus = target.isElite ? 1.5 : 1;
@@ -768,6 +795,10 @@ export class GameApp {
       tower.shotsFired += 1;
       this.audio.play("tower-fire", 0.92 + this.rng.next() * 0.12);
 
+      if (shouldTriggerLaneEcho(this.state.ownedUpgradeIds.has("wild-lane-echo"), LANE_ECHO_CHANCE, this.rng.next())) {
+        this.triggerLaneEchoShot(tower, target, range, baseDamage, stats);
+      }
+
       if (this.state.ownedUpgradeIds.has("wild-double-shot-cycle") && tower.shotsFired % 4 === 0) {
         const bonusTarget = this.findTowerTarget(tower.position, range);
         if (bonusTarget) {
@@ -784,6 +815,46 @@ export class GameApp {
         }
       }
     }
+  }
+
+  private triggerLaneEchoShot(tower: TowerState, primaryTarget: EnemyState, range: number, baseDamage: number, stats: TowerState["stats"]): void {
+    const echoTarget = this.findSecondaryTowerTarget(tower.position, range, primaryTarget.id);
+    if (!echoTarget) {
+      return;
+    }
+
+    const damage = baseDamage * LANE_ECHO_DAMAGE_MULTIPLIER;
+    const direction = normalize(sub(echoTarget.position, tower.position));
+
+    if (tower.type === "arc-tower") {
+      this.fireArcChain(tower.position, echoTarget, damage, this.state.ownedUpgradeIds.has("arc-extended-chain") ? 2 : 1);
+      return;
+    }
+
+    if (tower.type === "bombard") {
+      this.spawnProjectile("tower", tower.id, tower.position, direction, {
+        type: "bomb",
+        damage,
+        speed: stats.projectileSpeed,
+        ttl: 1.4,
+        radius: (this.state.ownedUpgradeIds.has("bombard-expanded-blast") ? 1.4 : 0.9) * (stats.splashRadius + 0.2 * tower.level),
+        targetId: echoTarget.id,
+        chainRemaining: 0,
+        tags: ["tower", "bombard", "lane-echo"],
+      });
+      return;
+    }
+
+    this.spawnProjectile("tower", tower.id, tower.position, direction, {
+      type: "bolt",
+      damage,
+      speed: stats.projectileSpeed,
+      ttl: 1.1,
+      radius: 0.36,
+      targetId: echoTarget.id,
+      chainRemaining: 0,
+      tags: ["tower", tower.type, "lane-echo"],
+    });
   }
 
   private updateTraps(dt: number): void {
@@ -942,21 +1013,11 @@ export class GameApp {
   private updateEnemies(dt: number): void {
     const biome = biomeSequence[this.state.currentBiomeIndex] ?? biomeSequence[biomeSequence.length - 1]!;
     const laneMap = new Map(biome.lanes.map((lane) => [lane.id, lane]));
+    const livingWitches = this.state.enemies.filter((enemy) => !enemy.isDead && enemy.type === "witch");
 
     for (const enemy of this.state.enemies) {
       if (enemy.isDead) {
         continue;
-      }
-
-      if (enemy.type === "witch") {
-        for (const ally of this.state.enemies) {
-          if (ally.isDead || ally.id === enemy.id) {
-            continue;
-          }
-          if (distance2D(ally.position, enemy.position) <= 6) {
-            ally.stats.speed = Math.max(ally.stats.speed, ally.stats.speed * 1.08);
-          }
-        }
       }
 
       const lane = laneMap.get(enemy.laneId) ?? biome.lanes[0]!;
@@ -964,8 +1025,17 @@ export class GameApp {
       const targetPoint = path[Math.min(path.length - 1, enemy.pathIndex + 1)] ?? path[path.length - 1]!;
       const toTarget = sub(targetPoint, enemy.position);
       const direction = normalize(v3(toTarget.x, 0, toTarget.z));
-      const speedFactor = enemy.statuses.some((status) => status.type === "freeze") ? 0 : 1;
-      const speed = enemy.stats.speed * speedFactor;
+      let nearbyWitches = 0;
+      for (const witch of livingWitches) {
+        if (witch.id === enemy.id) {
+          continue;
+        }
+        if (distance2D(enemy.position, witch.position) <= 6) {
+          nearbyWitches += 1;
+        }
+      }
+      const witchAuraMultiplier = computeWitchAuraMultiplier(nearbyWitches);
+      const speed = computeEnemyMoveSpeed(enemy.stats.speed, enemy.movementSpeedMultiplier, witchAuraMultiplier);
       enemy.velocity = mul(direction, speed);
       enemy.position = add(enemy.position, mul(enemy.velocity, dt));
 
@@ -977,6 +1047,7 @@ export class GameApp {
       if (enemy.pathIndex >= path.length - 1) {
         this.hitCore(enemy.stats.contactDamage, enemy);
         enemy.isDead = true;
+        enemy.deathOutcome = "escaped";
         continue;
       }
 
@@ -1086,36 +1157,38 @@ export class GameApp {
       }
 
       enemy.deathProcessed = true;
-      const goldGain = enemy.stats.bountyGold * this.state.modifiers.economyGoldMultiplier * waveGoldScale(this.state.wave.globalWaveNumber);
-      this.state.resources.gold += goldGain;
-      this.state.resources.essence += enemy.isBoss ? 20 : enemy.isElite ? 3 : 1;
+      if (shouldAwardEnemyRewards(enemy.deathOutcome)) {
+        const goldGain = enemy.stats.bountyGold * this.state.modifiers.economyGoldMultiplier * waveGoldScale(this.state.wave.globalWaveNumber);
+        this.state.resources.gold += goldGain;
+        this.state.resources.essence += enemy.isBoss ? 20 : enemy.isElite ? 3 : 1;
 
-      if (enemy.isElite && this.state.ownedUpgradeIds.has("economy-gold-elite")) {
-        this.state.resources.gold += 30;
-      }
-
-      if (enemy.isBoss) {
-        this.state.runStats.bossesDefeated += 1;
-        this.audio.play("boss-intro", 0.7);
-        if (this.state.ownedUpgradeIds.has("economy-boss-bounty")) {
-          this.state.resources.gold += 120;
-          this.state.resources.mana = clamp(this.state.resources.mana + 35, 0, MAX_MANA);
+        if (enemy.isElite && (this.state.ownedUpgradeIds.has("economy-gold-elite") || this.state.ownedUpgradeIds.has("economy-gold-flow-2"))) {
+          this.state.resources.gold += 30;
         }
-      }
 
-      if (this.state.ownedUpgradeIds.has("economy-combo-dividend") && this.state.runStats.kills % 5 === 0) {
-        this.state.resources.gold += 18;
-      }
+        if (enemy.isBoss) {
+          this.state.runStats.bossesDefeated += 1;
+          this.audio.play("boss-intro", 0.7);
+          if (this.state.ownedUpgradeIds.has("economy-boss-bounty")) {
+            this.state.resources.gold += 120;
+            this.state.resources.mana = clamp(this.state.resources.mana + 35, 0, MAX_MANA);
+          }
+        }
 
-      if (this.state.ownedUpgradeIds.has("economy-essence-bonus") && (enemy.isElite || enemy.isBoss)) {
-        this.state.resources.essence += enemy.isBoss ? 15 : 2;
-      }
+        if (this.state.ownedUpgradeIds.has("economy-combo-dividend") && this.state.runStats.kills % 5 === 0) {
+          this.state.resources.gold += 18;
+        }
 
-      if (enemy.type === "juggernaut") {
-        this.applyJuggernautDeathShockwave(enemy);
-      }
+        if (this.state.ownedUpgradeIds.has("economy-essence-bonus") && (enemy.isElite || enemy.isBoss)) {
+          this.state.resources.essence += enemy.isBoss ? 15 : 2;
+        }
 
-      this.audio.play("enemy-death", 0.92 + this.rng.next() * 0.2);
+        if (enemy.type === "juggernaut") {
+          this.applyJuggernautDeathShockwave(enemy);
+        }
+
+        this.audio.play("enemy-death", 0.92 + this.rng.next() * 0.2);
+      }
     }
 
     this.state.enemies = this.state.enemies.filter((enemy) => !(enemy.isDead && enemy.deathProcessed && this.state.time % 0.35 < 0.03));
@@ -1165,6 +1238,7 @@ export class GameApp {
       isBoss,
       isDead: false,
       deathProcessed: false,
+      deathOutcome: null,
       bossPhase: 1,
       stats: {
         maxHealth: archetype.baseHealth * scale * eliteMultiplier,
@@ -1173,7 +1247,10 @@ export class GameApp {
         contactDamage: archetype.contactDamage,
         bountyGold: archetype.bountyGold,
       },
+      movementSpeedMultiplier: 1,
       freezeBuildup: 0,
+      freezePulseTimer: 0,
+      thermalFractureTimer: 0,
       statuses: [],
       targetId: null,
     };
@@ -1206,6 +1283,26 @@ export class GameApp {
         continue;
       }
       const score = enemy.pathProgress * 10 + (enemy.isElite ? 4 : 0) + (enemy.isBoss ? 8 : 0) - dist * 0.2;
+      if (score > bestScore) {
+        bestScore = score;
+        best = enemy;
+      }
+    }
+    return best;
+  }
+
+  private findSecondaryTowerTarget(position: Vec3, range: number, excludedEnemyId: string): EnemyState | null {
+    let best: EnemyState | null = null;
+    let bestScore = -Infinity;
+    for (const enemy of this.state.enemies) {
+      if (enemy.isDead || enemy.id === excludedEnemyId) {
+        continue;
+      }
+      const dist = distance2D(position, enemy.position);
+      if (dist > range) {
+        continue;
+      }
+      const score = enemy.pathProgress * 10 + (enemy.isElite ? 3 : 0) + (enemy.isBoss ? 5 : 0) - dist * 0.25;
       if (score > bestScore) {
         bestScore = score;
         best = enemy;

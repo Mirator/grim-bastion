@@ -1,4 +1,5 @@
 import type { EnemyState, MutableGameState, StatusStack, StatusType } from "../types";
+import { computeStatusMoveMultiplier } from "./gameplayRules";
 
 function statusTickDamage(type: StatusType, intensity: number): number {
   switch (type) {
@@ -38,7 +39,6 @@ export class StatusSystem {
       }
 
       let slowMultiplier = 1;
-      let freezeLock = false;
       let shockVulnerable = 1;
 
       for (const status of enemy.statuses) {
@@ -52,10 +52,6 @@ export class StatusSystem {
           slowMultiplier = state.modifiers.allSlowEffectsStack ? slowMultiplier * baseSlow : Math.min(slowMultiplier, baseSlow);
         }
 
-        if (status.type === "freeze") {
-          freezeLock = true;
-        }
-
         if (status.type === "shock") {
           shockVulnerable += 0.1 + state.modifiers.shockVulnerabilityBonus;
         }
@@ -63,6 +59,9 @@ export class StatusSystem {
         const dotDamage = statusTickDamage(status.type, status.intensity);
         if (dotDamage > 0) {
           this.damageEnemy(state, enemy, dotDamage * dt * shockVulnerable, `${status.type}-dot`);
+          if (enemy.isDead) {
+            break;
+          }
 
           if (status.type === "poison" && state.ownedUpgradeIds.has("wild-poison-spread")) {
             this.spreadPoison(state, enemy, status.intensity * 0.45, status.duration * 0.65);
@@ -70,9 +69,14 @@ export class StatusSystem {
         }
       }
 
-      enemy.statuses = enemy.statuses.filter((entry) => entry.duration > 0);
+      if (enemy.isDead) {
+        continue;
+      }
 
-      if (enemy.freezeBuildup >= 100 && !freezeLock) {
+      enemy.statuses = enemy.statuses.filter((entry) => entry.duration > 0);
+      let hasFreeze = enemy.statuses.some((entry) => entry.type === "freeze");
+
+      if (enemy.freezeBuildup >= 100 && !hasFreeze) {
         enemy.freezeBuildup = 0;
         enemy.statuses.push({
           type: "freeze",
@@ -80,15 +84,22 @@ export class StatusSystem {
           duration: 1.4 * (1 + state.modifiers.freezeDurationMultiplier),
           sourceId: "freeze-threshold",
         });
+        hasFreeze = true;
       }
 
-      if (enemy.statuses.some((entry) => entry.type === "freeze")) {
-        enemy.velocity.x = 0;
-        enemy.velocity.z = 0;
+      if (state.ownedUpgradeIds.has("frost-spreading-freeze")) {
+        this.applyFrostSpreadingFreeze(state, enemy, dt, hasFreeze);
       } else {
-        enemy.velocity.x *= slowMultiplier;
-        enemy.velocity.z *= slowMultiplier;
+        enemy.freezePulseTimer = 0;
       }
+
+      if (state.ownedUpgradeIds.has("wild-fire-and-frost")) {
+        this.applyThermalFracture(state, enemy, dt, hasFreeze);
+      } else {
+        enemy.thermalFractureTimer = 0;
+      }
+
+      enemy.movementSpeedMultiplier = computeStatusMoveMultiplier(slowMultiplier, hasFreeze);
     }
   }
 
@@ -104,8 +115,50 @@ export class StatusSystem {
 
     if (enemy.stats.health <= 0) {
       enemy.isDead = true;
+      enemy.deathOutcome ??= "killed";
       this.handleEnemyDeath(state, enemy);
     }
+  }
+
+  private applyFrostSpreadingFreeze(state: MutableGameState, enemy: EnemyState, dt: number, hasFreeze: boolean): void {
+    enemy.freezePulseTimer = Math.max(0, enemy.freezePulseTimer - dt);
+    if (!hasFreeze || enemy.freezePulseTimer > 0) {
+      return;
+    }
+
+    enemy.freezePulseTimer = 0.65;
+    for (const other of state.enemies) {
+      if (other.isDead || other.id === enemy.id) {
+        continue;
+      }
+      const dx = other.position.x - enemy.position.x;
+      const dz = other.position.z - enemy.position.z;
+      if (dx * dx + dz * dz > 4 * 4) {
+        continue;
+      }
+      other.freezeBuildup += 20;
+      this.addStatus(other, {
+        type: "slow",
+        intensity: 0.65,
+        duration: 1.2,
+        sourceId: `frost-spread:${enemy.id}`,
+      });
+    }
+  }
+
+  private applyThermalFracture(state: MutableGameState, enemy: EnemyState, dt: number, hasFreeze: boolean): void {
+    enemy.thermalFractureTimer = Math.max(0, enemy.thermalFractureTimer - dt);
+    if (!hasFreeze || enemy.thermalFractureTimer > 0) {
+      return;
+    }
+
+    const hasBurn = enemy.statuses.some((status) => status.type === "burn");
+    if (!hasBurn) {
+      return;
+    }
+
+    enemy.thermalFractureTimer = 0.9;
+    this.damageEnemy(state, enemy, 12, "thermal-fracture");
   }
 
   private spreadPoison(state: MutableGameState, origin: EnemyState, intensity: number, duration: number): void {

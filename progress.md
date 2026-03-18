@@ -40,3 +40,23 @@ Original prompt: Implement whole [grim_bastion_td_concept.md](grim_bastion_td_co
     - `output/web-game-camera-fullscreen/`
     - `output/web-game-camera-resize/`
   - no console/page error JSON artifacts were produced in these runs.
+
+## 2026-03-18
+- Implemented wave/mode guardrails so build/combat toggling is valid only during active waves and both HUD + keyboard paths use the same toggle logic.
+- Updated wave progression trigger to follow `wave.active` (not render mode), so waves continue while the player is in build view during active combat.
+- Added explicit enemy lifecycle outcome tracking (`killed` vs `escaped`) and changed reward processing to grant gold/essence/boss stats only for killed enemies.
+- Fixed enemy movement/status coupling by introducing movement multipliers from status evaluation and replacing permanent witch speed mutation with bounded temporary aura-based speed scaling.
+- Implemented previously no-op upgrades with pragmatic runtime behavior:
+  - `economy-upgrade-discount` now reduces future defense build costs.
+  - `frost-spreading-freeze` now pulses freeze buildup to nearby enemies.
+  - `wild-fire-and-frost` now adds periodic bonus fracture damage to burning+frozen enemies.
+  - `wild-lane-echo` now enables occasional secondary tower shots.
+  - `wild-final-stand` now grants a temporary multiplier under low core health.
+- Hardened save migration with strict unlock validation, clamped numeric fields, and run-history record sanitization.
+- Added pure gameplay rule helpers for toggling, reward eligibility, movement multipliers, lane-echo trigger, and final-stand resolution.
+- Expanded tests: gameplay rules, status behavior (movement/frost spread/thermal fracture/kill outcome), upgrade behavior assertions, and malformed save migration sanitization.
+- Verification completed:
+  - `npm test` (all passing)
+  - `npm run build` (passing)
+  - Playwright smoke loop (`scripts/web_game_playwright_client.js`) with screenshot/state inspection and no new console errors.
+  - Confirmed active-wave progression in build mode and confirmed escaped enemies reduced core HP without granting kill rewards (gold/essence unchanged).

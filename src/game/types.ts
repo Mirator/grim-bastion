@@ -18,6 +18,8 @@ export type EnemyType =
   | "juggernaut"
   | "boss";
 
+export type EnemyLifecycleOutcome = "killed" | "escaped";
+
 export type TowerType = "ballista" | "frost-obelisk" | "bombard" | "arc-tower" | "shrine";
 
 export type TrapType = "spike-trap" | "push-trap" | "flame-trap";
@@ -105,9 +107,13 @@ export interface EnemyState {
   isBoss: boolean;
   isDead: boolean;
   deathProcessed: boolean;
+  deathOutcome: EnemyLifecycleOutcome | null;
   bossPhase: number;
   stats: EnemyStats;
+  movementSpeedMultiplier: number;
   freezeBuildup: number;
+  freezePulseTimer: number;
+  thermalFractureTimer: number;
   statuses: StatusStack[];
   targetId: string | null;
 }

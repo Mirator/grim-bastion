@@ -396,6 +396,7 @@ export function createUpgradePool(): UpgradeDefinition[] {
       tags: ["hero", "ability", "support"],
       weight: rarityWeight("rare"),
       apply: (state) => {
+        state.ownedUpgradeIds.add("hero-overcharge-extension");
         state.modifiers.overchargePulseChance += 0.05;
       },
     },
@@ -603,12 +604,13 @@ export function createUpgradePool(): UpgradeDefinition[] {
       name: "Refit Protocol",
       category: "economy",
       rarity: "uncommon",
-      description: "Tower upgrades cost 15% less.",
-      synergyHint: "Helps keep pace with scaling waves.",
+      description: "Defense refits reduce future tower and trap build costs.",
+      synergyHint: "Smooths economy when pivoting defense layouts.",
       tags: ["economy", "upgrade"],
       weight: rarityWeight("uncommon"),
       apply: (state) => {
-        state.ownedUpgradeIds.add("economy-upgrade-discount");
+        state.modifiers.towerCostMultiplier = Math.max(0.55, state.modifiers.towerCostMultiplier - 0.08);
+        state.modifiers.trapCostMultiplier = Math.max(0.55, state.modifiers.trapCostMultiplier - 0.05);
       },
     },
     {
