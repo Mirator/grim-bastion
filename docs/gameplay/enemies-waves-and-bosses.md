@@ -27,7 +27,10 @@ Describe hostile encounter structure: enemy archetypes, wave spawning, boss esca
   - `juggernaut`: heavy threat with extra punishment on contact/death events.
   - `boss`: phase-based milestone enemy.
 - Movement and pathing:
-  - Enemies advance lane points by nearest next waypoint progression.
+  - Ground enemies use dynamic shortest-path routing on a shared navigation grid.
+  - Navigation blockers are biome obstacles plus placed towers (traps do not block paths).
+  - Path fields are recalculated when biome/tower layout changes.
+  - Flying enemies still follow flying lane points and ignore ground blockers.
   - Every lane route now terminates at bastion core endpoint.
   - Core damage/escape resolution is based on entering the core endpoint zone.
   - Speed is influenced by statuses and support aura effects.

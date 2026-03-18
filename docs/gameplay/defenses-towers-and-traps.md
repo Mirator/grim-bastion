@@ -14,7 +14,9 @@ Explain how the player's automated defense layer is built, operated, and adapted
 
 - Placement:
   - Towers and traps both use freeform placement at reticle ground position.
-  - Placement is valid only when gold is sufficient, position is outside core buffer, and spacing from existing defenses is respected.
+  - Placement is valid only when gold is sufficient, position is outside core buffer, spacing from existing defenses is respected, and map obstacles are avoided.
+  - Towers are rejected if placement would fully block enemy ground routes to core.
+  - Traps do not act as path blockers and are exempt from route-block checks.
   - Build preview state exposes validity, block reason, and nearest sell target.
 - Tower behavior:
   - Towers attack on cooldown once a valid target is found in range.

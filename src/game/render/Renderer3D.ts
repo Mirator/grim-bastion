@@ -1,5 +1,9 @@
 import * as THREE from "three";
 import {
+  ARENA_MAX_X,
+  ARENA_MAX_Z,
+  ARENA_MIN_X,
+  ARENA_MIN_Z,
   CORE_BUILD_BUFFER_RADIUS,
   CORE_WORLD_POSITION,
 } from "../constants";
@@ -69,13 +73,13 @@ function hueForEnemy(type: string): number {
 }
 
 export class Renderer3D {
-  private static readonly ARENA_MIN_X = -28;
+  private static readonly ARENA_MIN_X = ARENA_MIN_X;
 
-  private static readonly ARENA_MAX_X = 16;
+  private static readonly ARENA_MAX_X = ARENA_MAX_X;
 
-  private static readonly ARENA_MIN_Z = -19;
+  private static readonly ARENA_MIN_Z = ARENA_MIN_Z;
 
-  private static readonly ARENA_MAX_Z = 19;
+  private static readonly ARENA_MAX_Z = ARENA_MAX_Z;
 
   private static readonly CAMERA_POSITION_LAMBDA = 11;
 
@@ -133,6 +137,8 @@ export class Renderer3D {
 
   private hazardMeshes = new Map<string, THREE.Mesh>();
 
+  private obstacleMeshes = new Map<string, THREE.Mesh>();
+
   private laneLineMeshes = new Map<string, THREE.Line>();
 
   private pooledEnemyMeshes: THREE.Mesh[] = [];
@@ -176,6 +182,8 @@ export class Renderer3D {
   private activeBiomeBackgroundIndex = -1;
 
   private activeLaneBiomeIndex = -1;
+
+  private activeObstacleBiomeIndex = -1;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -239,6 +247,12 @@ export class Renderer3D {
       (line.material as THREE.Material).dispose();
     }
     this.laneLineMeshes.clear();
+    for (const mesh of this.obstacleMeshes.values()) {
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+    this.obstacleMeshes.clear();
     this.placementPreviewMesh.geometry.dispose();
     (this.placementPreviewMesh.material as THREE.Material).dispose();
     this.coreBuildBufferMesh.geometry.dispose();
@@ -402,6 +416,7 @@ export class Renderer3D {
     this.syncTowerMeshes(state);
     this.syncTrapMeshes(state);
     this.syncProjectileMeshes(state);
+    this.syncObstacles(state);
     this.syncLanePaths(state);
     this.syncPlacementPreview(state);
     this.syncHazards(state);
@@ -716,6 +731,49 @@ export class Renderer3D {
     }
 
     this.activeLaneBiomeIndex = state.currentBiomeIndex;
+  }
+
+  private syncObstacles(state: MutableGameState): void {
+    if (state.currentBiomeIndex === this.activeObstacleBiomeIndex) {
+      return;
+    }
+
+    for (const mesh of this.obstacleMeshes.values()) {
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+    this.obstacleMeshes.clear();
+
+    const biome = biomeSequence[state.currentBiomeIndex] ?? biomeSequence[biomeSequence.length - 1];
+    if (!biome) {
+      this.activeObstacleBiomeIndex = state.currentBiomeIndex;
+      return;
+    }
+
+    for (const obstacle of biome.obstacles) {
+      let geometry: THREE.BufferGeometry;
+      let color = "#7e8d9a";
+      if (obstacle.style === "ruin") {
+        geometry = new THREE.BoxGeometry(obstacle.radius * 1.8, obstacle.height, obstacle.radius * 1.6);
+        color = "#8d877c";
+      } else if (obstacle.style === "tree") {
+        geometry = new THREE.ConeGeometry(obstacle.radius * 0.95, obstacle.height, 8);
+        color = "#5d7f58";
+      } else {
+        geometry = new THREE.CylinderGeometry(obstacle.radius, obstacle.radius * 1.1, obstacle.height, 10);
+      }
+
+      const mesh = new THREE.Mesh(
+        geometry,
+        new THREE.MeshStandardMaterial({ color, roughness: 0.8, metalness: 0.06 }),
+      );
+      mesh.position.set(obstacle.center.x, obstacle.height * 0.5, obstacle.center.z);
+      this.scene.add(mesh);
+      this.obstacleMeshes.set(obstacle.id, mesh);
+    }
+
+    this.activeObstacleBiomeIndex = state.currentBiomeIndex;
   }
 
   private syncPlacementPreview(state: MutableGameState): void {

@@ -1,4 +1,4 @@
-import type { BiomeDefinition, BuildNode, LaneDefinition, Vec3, WaveTemplate } from "../types";
+import type { BiomeDefinition, BuildNode, LaneDefinition, MapObstacle, Vec3, WaveTemplate } from "../types";
 import { CORE_WORLD_POSITION } from "../constants";
 
 function point(x: number, y: number, z: number): Vec3 {
@@ -27,6 +27,25 @@ function node(id: string, x: number, z: number, laneId: string, allowsTower = tr
     allowsTower,
     allowsTrap,
     occupiedBy: null,
+  };
+}
+
+function obstacle(
+  id: string,
+  x: number,
+  z: number,
+  radius: number,
+  height: number,
+  style: MapObstacle["style"] = "rock",
+): MapObstacle {
+  return {
+    id,
+    center: point(x, 0, z),
+    radius,
+    height,
+    style,
+    blocksGround: true,
+    blocksHero: true,
   };
 }
 
@@ -69,6 +88,13 @@ const ruinedGate: BiomeDefinition = {
       dps: 14,
       slowMultiplier: 1,
     },
+  ],
+  obstacles: [
+    obstacle("rg-ob-1", -15, 4, 1.8, 2.6, "ruin"),
+    obstacle("rg-ob-2", -7, 0, 1.7, 2.2, "rock"),
+    obstacle("rg-ob-3", 1, -5.5, 1.9, 2.8, "ruin"),
+    obstacle("rg-ob-4", 7, -3, 1.6, 2.1, "rock"),
+    obstacle("rg-ob-5", 5, 10, 2.2, 3.1, "tree"),
   ],
   waveTemplates: [
     wave(
@@ -156,6 +182,13 @@ const frozenPass: BiomeDefinition = {
       dps: 8,
       slowMultiplier: 0.8,
     },
+  ],
+  obstacles: [
+    obstacle("fp-ob-1", -12, -1, 1.9, 2.9, "rock"),
+    obstacle("fp-ob-2", -6, -5.5, 1.6, 2.3, "ruin"),
+    obstacle("fp-ob-3", -2, 5, 1.8, 2.7, "tree"),
+    obstacle("fp-ob-4", 5.5, -1.5, 1.7, 2.4, "rock"),
+    obstacle("fp-ob-5", 8.5, 6.5, 1.5, 2.1, "ruin"),
   ],
   waveTemplates: [
     wave(
@@ -247,6 +280,14 @@ const blightMarsh: BiomeDefinition = {
       dps: 9,
       slowMultiplier: 0.9,
     },
+  ],
+  obstacles: [
+    obstacle("bm-ob-1", -14, 2.5, 2.1, 3.2, "tree"),
+    obstacle("bm-ob-2", -8, -5, 1.7, 2.4, "rock"),
+    obstacle("bm-ob-3", -1.5, 6.5, 1.9, 2.8, "ruin"),
+    obstacle("bm-ob-4", 4.5, -6.5, 1.8, 2.5, "rock"),
+    obstacle("bm-ob-5", 7.5, 4, 1.7, 2.6, "tree"),
+    obstacle("bm-ob-6", 10, -1.5, 1.5, 2.2, "ruin"),
   ],
   waveTemplates: [
     wave(

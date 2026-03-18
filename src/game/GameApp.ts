@@ -13,10 +13,15 @@ import {
 } from "./data/archetypes";
 import { biomeSequence } from "./data/biomes";
 import {
+  ARENA_MAX_X,
+  ARENA_MAX_Z,
+  ARENA_MIN_X,
+  ARENA_MIN_Z,
   CORE_BUILD_BUFFER_RADIUS,
   CORE_REACH_RADIUS,
   CORE_WORLD_POSITION,
   DEFENSE_MIN_SPACING,
+  HERO_COLLISION_RADIUS,
   SELL_TARGET_RADIUS,
 } from "./constants";
 import { Renderer3D } from "./render/Renderer3D";
@@ -42,6 +47,7 @@ import { loadSave, patchSave } from "./systems/SaveSystem";
 import { StatusSystem } from "./systems/StatusSystem";
 import { UpgradeSystem } from "./systems/UpgradeSystem";
 import { WaveDirector } from "./systems/WaveDirector";
+import { NavigationGrid } from "./systems/navigationGrid";
 import type {
   AbilityType,
   BuildPlacementPreview,
@@ -168,6 +174,12 @@ export class GameApp {
 
   private pendingDashTrailPulse = false;
 
+  private navigation = new NavigationGrid();
+
+  private navigationBiomeIndex = -1;
+
+  private navigationTowersDirty = true;
+
   constructor(canvas: HTMLCanvasElement, hudRoot: HTMLElement, renderer: Renderer3D, physics: PhysicsHandles) {
     this.canvas = canvas;
     this.renderer = renderer;
@@ -224,6 +236,37 @@ export class GameApp {
 
   private sampleInput(): InputState {
     return this.input.sample(this.canvas.getBoundingClientRect());
+  }
+
+  private currentBiome() {
+    return biomeSequence[this.state.currentBiomeIndex] ?? biomeSequence[biomeSequence.length - 1]!;
+  }
+
+  private markNavigationDirty(): void {
+    this.navigationTowersDirty = true;
+  }
+
+  private currentGroundSpawnPoints(): Vec3[] {
+    const biome = this.currentBiome();
+    return biome.lanes
+      .map((lane) => lane.points[0] ?? null)
+      .filter((entry): entry is Vec3 => entry !== null);
+  }
+
+  private ensureNavigationState(): void {
+    const biomeChanged = this.navigationBiomeIndex !== this.state.currentBiomeIndex;
+    if (biomeChanged) {
+      this.navigation.setStaticObstacles(this.currentBiome().obstacles);
+      this.navigationBiomeIndex = this.state.currentBiomeIndex;
+      this.navigationTowersDirty = true;
+    }
+
+    if (this.navigationTowersDirty) {
+      this.navigation.setTowerBlockers(this.state.towers);
+      this.navigationTowersDirty = false;
+    }
+
+    this.navigation.ensureDistanceField(CORE_WORLD_POSITION);
   }
 
   private loop = (): void => {
@@ -373,6 +416,8 @@ export class GameApp {
     this.loadoutCycle = 0;
     this.dashMotion = null;
     this.pendingDashTrailPulse = false;
+    this.navigationBiomeIndex = -1;
+    this.navigationTowersDirty = true;
     this.renderer.initializeCameraRig(this.state.hero.position, this.state.hero.facing);
     this.updateReticleFrame(FIXED_DT);
     this.syncHeroPhysics();
@@ -467,6 +512,7 @@ export class GameApp {
 
   private update(dt: number, input: InputState): void {
     this.state.time += dt;
+    this.ensureNavigationState();
     this.updateReticleFrame(dt);
     this.updateHero(dt, input);
     this.updateHeroAbilities(dt, input);
@@ -556,8 +602,13 @@ export class GameApp {
       this.state.hero.position = add(this.state.hero.position, mul(moveVelocity, dt));
     }
 
-    this.state.hero.position.x = clamp(this.state.hero.position.x, -28, 16);
-    this.state.hero.position.z = clamp(this.state.hero.position.z, -19, 19);
+    this.state.hero.position.x = clamp(this.state.hero.position.x, ARENA_MIN_X, ARENA_MAX_X);
+    this.state.hero.position.z = clamp(this.state.hero.position.z, ARENA_MIN_Z, ARENA_MAX_Z);
+    this.state.hero.position = this.navigation.resolvePositionAgainstBlockers(
+      this.state.hero.position,
+      HERO_COLLISION_RADIUS,
+      this.navigation.getHeroCollisionBlockers(),
+    );
     if (this.pendingDashTrailPulse) {
       this.pendingDashTrailPulse = false;
       this.applyDashLightningTrail();
@@ -750,9 +801,9 @@ export class GameApp {
         const currentPosition = copyVec3(this.state.hero.position);
         const rawDestination = add(currentPosition, mul(this.state.hero.facing, dashDistance));
         const destination = v3(
-          clamp(rawDestination.x, -28, 16),
+          clamp(rawDestination.x, ARENA_MIN_X, ARENA_MAX_X),
           currentPosition.y,
-          clamp(rawDestination.z, -19, 19),
+          clamp(rawDestination.z, ARENA_MIN_Z, ARENA_MAX_Z),
         );
         const dashVector = sub(destination, currentPosition);
         const hasLightningTrail = this.state.ownedUpgradeIds.has("hero-dash-lightning-trail");
@@ -1167,9 +1218,10 @@ export class GameApp {
     this.state.projectiles = next;
   }
   private updateEnemies(dt: number): void {
-    const biome = biomeSequence[this.state.currentBiomeIndex] ?? biomeSequence[biomeSequence.length - 1]!;
+    const biome = this.currentBiome();
     const laneMap = new Map(biome.lanes.map((lane) => [lane.id, lane]));
     const livingWitches = this.state.enemies.filter((enemy) => !enemy.isDead && enemy.type === "witch");
+    const groundBlockers = this.navigation.getGroundCollisionBlockers();
 
     for (const enemy of this.state.enemies) {
       if (enemy.isDead) {
@@ -1177,11 +1229,25 @@ export class GameApp {
       }
 
       const lane = laneMap.get(enemy.laneId) ?? biome.lanes[0]!;
-      const path = enemy.isFlying ? lane.flyingPoints : lane.points;
-      const corePoint = path[path.length - 1] ?? CORE_WORLD_POSITION;
-      const targetPoint = path[Math.min(path.length - 1, enemy.pathIndex + 1)] ?? corePoint;
-      const toTarget = sub(targetPoint, enemy.position);
-      const direction = normalize(v3(toTarget.x, 0, toTarget.z));
+      let direction = v3();
+      let corePoint = CORE_WORLD_POSITION;
+
+      if (enemy.isFlying) {
+        const path = lane.flyingPoints;
+        corePoint = path[path.length - 1] ?? CORE_WORLD_POSITION;
+        const targetPoint = path[Math.min(path.length - 1, enemy.pathIndex + 1)] ?? corePoint;
+        const toTarget = sub(targetPoint, enemy.position);
+        direction = normalize(v3(toTarget.x, 0, toTarget.z));
+        if (distance2D(enemy.position, targetPoint) <= 0.7) {
+          enemy.pathIndex += 1;
+          enemy.pathProgress = Math.max(enemy.pathProgress, enemy.pathIndex);
+        }
+      } else {
+        const flowTarget = this.navigation.sampleFlowTarget(enemy.position, CORE_WORLD_POSITION);
+        const toTarget = flowTarget ? sub(flowTarget, enemy.position) : sub(CORE_WORLD_POSITION, enemy.position);
+        direction = normalize(v3(toTarget.x, 0, toTarget.z));
+      }
+
       let nearbyWitches = 0;
       for (const witch of livingWitches) {
         if (witch.id === enemy.id) {
@@ -1194,11 +1260,18 @@ export class GameApp {
       const witchAuraMultiplier = computeWitchAuraMultiplier(nearbyWitches);
       const speed = computeEnemyMoveSpeed(enemy.stats.speed, enemy.movementSpeedMultiplier, witchAuraMultiplier);
       enemy.velocity = mul(direction, speed);
-      enemy.position = add(enemy.position, mul(enemy.velocity, dt));
+      const nextPosition = add(enemy.position, mul(enemy.velocity, dt));
+      enemy.position = enemy.isFlying
+        ? nextPosition
+        : this.navigation.resolvePositionAgainstBlockers(nextPosition, enemy.collisionRadius, groundBlockers);
 
-      if (distance2D(enemy.position, targetPoint) <= 0.7) {
-        enemy.pathIndex += 1;
-        enemy.pathProgress += 1;
+      if (!enemy.isFlying) {
+        const sampledDistance = this.navigation.sampleDistanceToCore(enemy.position, CORE_WORLD_POSITION);
+        const currentDistance = Number.isFinite(sampledDistance)
+          ? sampledDistance
+          : distance2D(enemy.position, CORE_WORLD_POSITION);
+        enemy.lastDistanceToCore = currentDistance;
+        enemy.pathProgress = Math.max(enemy.pathProgress, Math.max(0, enemy.spawnDistanceToCore - currentDistance));
       }
 
       const reachedCore = distance2D(enemy.position, corePoint) <= CORE_REACH_RADIUS;
@@ -1209,10 +1282,8 @@ export class GameApp {
         continue;
       }
 
-      if (enemy.type === "hound" && this.rng.next() < 0.18 * dt) {
-        if (this.rng.next() < 0.12) {
-          enemy.pathIndex = Math.max(0, enemy.pathIndex - 1);
-        }
+      if (enemy.type === "hound" && this.rng.next() < 0.18 * dt && this.rng.next() < 0.12) {
+        enemy.pathProgress = Math.max(0, enemy.pathProgress - 0.9);
       }
 
       if (enemy.isBoss) {
@@ -1374,7 +1445,7 @@ export class GameApp {
   }
 
   private spawnEnemy(enemyType: EnemyType, laneId: string, isElite: boolean, isBoss: boolean): void {
-    const biome = biomeSequence[this.state.currentBiomeIndex] ?? biomeSequence[biomeSequence.length - 1]!;
+    const biome = this.currentBiome();
     const lane = biome.lanes.find((entry) => entry.id === laneId) ?? biome.lanes[0]!;
     const archetype = enemyArchetypes[enemyType];
     const scale = waveHealthScale(this.state.wave.globalWaveNumber);
@@ -1382,6 +1453,13 @@ export class GameApp {
     const id = this.nextId(`enemy-${enemyType}`);
 
     const spawnPoint = archetype.isFlying ? lane.flyingPoints[0] : lane.points[0];
+    this.ensureNavigationState();
+    const sampledSpawnDistance = archetype.isFlying
+      ? distance2D(spawnPoint, CORE_WORLD_POSITION)
+      : this.navigation.sampleDistanceToCore(spawnPoint, CORE_WORLD_POSITION);
+    const spawnDistance = Number.isFinite(sampledSpawnDistance)
+      ? sampledSpawnDistance
+      : distance2D(spawnPoint, CORE_WORLD_POSITION);
     const enemy: EnemyState = {
       id,
       type: enemyType,
@@ -1406,6 +1484,9 @@ export class GameApp {
         bountyGold: archetype.bountyGold,
       },
       movementSpeedMultiplier: 1,
+      collisionRadius: archetype.isFlying ? Math.max(0.35, archetype.size) : Math.max(0.45, archetype.size),
+      spawnDistanceToCore: spawnDistance,
+      lastDistanceToCore: spawnDistance,
       freezeBuildup: 0,
       freezePulseTimer: 0,
       thermalFractureTimer: 0,
@@ -1640,8 +1721,10 @@ export class GameApp {
   }
 
   private computePlacementPreview(position: Vec3): BuildPlacementPreview {
+    this.ensureNavigationState();
     const cost = this.currentBuildCost();
-    const validation = validatePlacement(
+    const biome = this.currentBiome();
+    let validation = validatePlacement(
       position,
       this.state.resources.gold,
       cost,
@@ -1650,7 +1733,18 @@ export class GameApp {
       CORE_WORLD_POSITION,
       CORE_BUILD_BUFFER_RADIUS,
       DEFENSE_MIN_SPACING,
+      biome.obstacles,
     );
+
+    if (validation.canPlace && this.state.mode === "build" && this.isTowerType(this.state.selectedBuildType)) {
+      const blocksPath = this.navigation.wouldTowerPlacementBlockPaths(position, this.currentGroundSpawnPoints(), CORE_WORLD_POSITION);
+      if (blocksPath) {
+        validation = {
+          canPlace: false,
+          blockReason: "blocks-path",
+        };
+      }
+    }
 
     const sellTarget = findSellTarget(position, this.state.towers, this.state.traps, SELL_TARGET_RADIUS);
 
@@ -1692,7 +1786,7 @@ export class GameApp {
   }
 
   private resolvePlacementLaneId(position: Vec3): string {
-    const biome = biomeSequence[this.state.currentBiomeIndex] ?? biomeSequence[biomeSequence.length - 1]!;
+    const biome = this.currentBiome();
     return resolveNearestLaneId(position, biome.lanes);
   }
 
@@ -1731,6 +1825,8 @@ export class GameApp {
         maxHealth: 120,
       };
       this.state.towers.push(tower);
+      this.markNavigationDirty();
+      this.ensureNavigationState();
       this.state.placementPreview = this.computePlacementPreview(placementPoint);
       return;
     }
@@ -1782,6 +1878,8 @@ export class GameApp {
       }
       this.state.resources.gold += Math.round(refund);
       this.state.towers.splice(towerIndex, 1);
+      this.markNavigationDirty();
+      this.ensureNavigationState();
       this.state.placementPreview = this.computePlacementPreview(placementPoint);
       return;
     }
@@ -1926,6 +2024,13 @@ export class GameApp {
           type: trap.type,
           position: copyVec3(trap.position),
           cooldown: trap.cooldown,
+        })),
+        obstacles: biome.obstacles.map((obstacle) => ({
+          id: obstacle.id,
+          center: copyVec3(obstacle.center),
+          radius: obstacle.radius,
+          blocksGround: obstacle.blocksGround,
+          blocksHero: obstacle.blocksHero,
         })),
         placementPreview: {
           position: copyVec3(this.state.placementPreview.position),

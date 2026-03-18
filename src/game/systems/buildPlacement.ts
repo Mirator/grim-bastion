@@ -1,6 +1,7 @@
 import type {
   DefenseKind,
   LaneDefinition,
+  MapObstacle,
   PlacementBlockReason,
   TrapState,
   TowerState,
@@ -49,6 +50,16 @@ function hasDefenseOverlap(position: Vec3, towers: TowerState[], traps: TrapStat
   return false;
 }
 
+function hasObstacleOverlap(position: Vec3, obstacles: MapObstacle[], clearance: number): boolean {
+  for (const obstacle of obstacles) {
+    const requiredDistance = obstacle.radius + clearance;
+    if (distance2D(position, obstacle.center) < requiredDistance) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function validatePlacement(
   position: Vec3,
   gold: number,
@@ -58,6 +69,9 @@ export function validatePlacement(
   corePosition: Vec3,
   coreBuildBufferRadius: number,
   minSpacing: number,
+  obstacles: MapObstacle[] = [],
+  obstacleClearance = 0.55,
+  blocksPath = false,
 ): PlacementValidation {
   if (gold < cost) {
     return {
@@ -73,10 +87,24 @@ export function validatePlacement(
     };
   }
 
+  if (hasObstacleOverlap(position, obstacles, obstacleClearance)) {
+    return {
+      canPlace: false,
+      blockReason: "obstacle",
+    };
+  }
+
   if (hasDefenseOverlap(position, towers, traps, minSpacing)) {
     return {
       canPlace: false,
       blockReason: "overlap",
+    };
+  }
+
+  if (blocksPath) {
+    return {
+      canPlace: false,
+      blockReason: "blocks-path",
     };
   }
 

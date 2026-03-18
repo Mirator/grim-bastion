@@ -15,6 +15,7 @@ Capture how each biome defines spatial challenges, lane topology, hazard pressur
 - Biome composition:
   - Lanes define ground/flying path routes and now converge to bastion core endpoint.
   - Build placement is freeform and no longer constrained by biome node layout.
+  - Static obstacle clusters block hero and ground movement lanes.
   - Hazards add ambient lane pressure.
   - Wave templates define spawn groups, cadences, and boss timing.
 - Biome sequence:

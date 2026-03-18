@@ -115,6 +115,9 @@ export interface EnemyState {
   bossPhase: number;
   stats: EnemyStats;
   movementSpeedMultiplier: number;
+  collisionRadius: number;
+  spawnDistanceToCore: number;
+  lastDistanceToCore: number;
   freezeBuildup: number;
   freezePulseTimer: number;
   thermalFractureTimer: number;
@@ -133,7 +136,7 @@ export interface BuildNode {
 
 export type DefenseKind = "tower" | "trap";
 
-export type PlacementBlockReason = "insufficient-gold" | "core-buffer" | "overlap";
+export type PlacementBlockReason = "insufficient-gold" | "core-buffer" | "overlap" | "obstacle" | "blocks-path";
 
 export interface BuildPlacementPreview {
   position: Vec3;
@@ -236,6 +239,16 @@ export interface HazardZone {
   slowMultiplier: number;
 }
 
+export interface MapObstacle {
+  id: string;
+  center: Vec3;
+  radius: number;
+  height: number;
+  style: "rock" | "ruin" | "tree";
+  blocksGround: boolean;
+  blocksHero: boolean;
+}
+
 export interface BiomeDefinition {
   id: string;
   name: string;
@@ -243,6 +256,7 @@ export interface BiomeDefinition {
   lanes: LaneDefinition[];
   buildNodes: BuildNode[];
   hazards: HazardZone[];
+  obstacles: MapObstacle[];
   waveTemplates: WaveTemplate[];
 }
 
@@ -455,6 +469,13 @@ export interface RenderTextSnapshot {
     type: TrapType;
     position: Vec3;
     cooldown: number;
+  }>;
+  obstacles: Array<{
+    id: string;
+    center: Vec3;
+    radius: number;
+    blocksGround: boolean;
+    blocksHero: boolean;
   }>;
   placementPreview: {
     position: Vec3;

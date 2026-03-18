@@ -186,3 +186,50 @@ Original prompt: Implement whole [grim_bastion_td_concept.md](grim_bastion_td_co
     - `output/web-game-map-ui-rework-build2/`
     - `output/web-game-map-ui-rework-overlap/`
   - Confirmed overlap invalid-state feedback via `state-0.json` (`blockReason: "overlap"`, populated `sellTarget`) and visual ring state in screenshot.
+
+## 2026-03-18
+- Implemented dynamic obstacle navigation + collision pass across all biomes:
+  - Added biome `obstacles` data and new `MapObstacle` type.
+  - Added shared arena/nav constants (`ARENA_*`, `NAV_CELL_SIZE`, collision radii).
+  - Added `NavigationGrid` system with:
+    - 8-direction shortest-path distance field (Dijkstra from core),
+    - static obstacle + dynamic tower occupancy,
+    - flow-target sampling for enemy steering,
+    - tower placement route-block checks,
+    - reusable circle-collision resolution helper.
+- Integrated navigation and collision into runtime (`GameApp`):
+  - Ground enemies now route via navigation flow field and collide with map obstacles + towers.
+  - Hero now collides with map obstacles.
+  - Flying enemies keep lane flying-point behavior and ignore blockers.
+  - Added enemy nav bookkeeping (`collisionRadius`, `spawnDistanceToCore`, `lastDistanceToCore`) and path-progress tracking from nav distance delta.
+  - Added tower-path-blocking guard and obstacle-overlap placement validation.
+  - Marked navigation dirty/rebuilt on biome/tower layout changes.
+  - Automation snapshot now includes active obstacle metadata.
+- Renderer/HUD updates:
+  - Added biome obstacle meshes (rock/ruin/tree primitives) with biome-change lifecycle cleanup.
+  - Added minimap obstacle footprints.
+  - Added HUD placement text for new block reasons (`obstacle`, `blocks-path`).
+- Docs updates:
+  - `docs/gameplay/enemies-waves-and-bosses.md`
+  - `docs/gameplay/defenses-towers-and-traps.md`
+  - `docs/gameplay/biomes-and-encounter-design.md`
+- Test coverage additions/updates:
+  - Added `tests/navigation-grid.test.ts` (detours, reroutes after tower updates, path-block detection, collision resolution).
+  - Extended `tests/build-placement.test.ts` for `obstacle` + `blocks-path` validation.
+  - Extended `tests/biome-lanes.test.ts` for obstacle/core-clearance invariants.
+  - Updated enemy test fixture fields in `tests/status-system.test.ts`.
+- Verification:
+  - `npm test` passed (13 files, 54 tests).
+  - `npm run build` passed.
+  - Playwright client run completed with inspected artifacts in `output/web-game-obstacle-nav/`:
+    - `shot-0.png`, `shot-1.png`, `shot-2.png`
+    - `state-0.json`, `state-1.json`, `state-2.json`
+  - Confirmed in screenshots/state that:
+    - obstacle meshes render in-world,
+    - minimap shows obstacle footprints,
+    - placement can be blocked by obstacle overlap (`blockReason: "obstacle"`),
+    - wave enemies route around obstacle field without colliding through blockers.
+  - No Playwright console/page error artifact was produced in this run.
+- TODO / follow-up tuning:
+  - Fine-tune obstacle radii/positions after gameplay feel pass (especially Ruined Gate opening pressure).
+  - Consider exposing an explicit `blocks-path` placement scenario in automated UI choreography for visual regression checks.

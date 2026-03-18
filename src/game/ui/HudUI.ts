@@ -26,6 +26,12 @@ function formatBlockReason(reason: MutableGameState["placementPreview"]["blockRe
   if (reason === "core-buffer") {
     return "too close to core";
   }
+  if (reason === "obstacle") {
+    return "overlaps obstacle";
+  }
+  if (reason === "blocks-path") {
+    return "would block enemy path";
+  }
   return "overlaps defense";
 }
 
@@ -237,6 +243,7 @@ export class HudUI {
   private renderMinimap(state: MutableGameState): void {
     const ctx = this.minimapCtx;
     const { width, height } = this.minimap;
+    const biome = biomeSequence[state.currentBiomeIndex] ?? biomeSequence[biomeSequence.length - 1]!;
     ctx.clearRect(0, 0, width, height);
     ctx.fillStyle = "rgba(20, 24, 33, 0.95)";
     ctx.fillRect(0, 0, width, height);
@@ -252,7 +259,7 @@ export class HudUI {
 
     ctx.strokeStyle = "rgba(140, 175, 210, 0.25)";
     ctx.lineWidth = 1;
-    for (const biomeLane of biomeSequence[state.currentBiomeIndex]?.lanes ?? []) {
+    for (const biomeLane of biome.lanes) {
       ctx.beginPath();
       biomeLane.points.forEach((lanePoint, index) => {
         const p = project(lanePoint);
@@ -263,6 +270,14 @@ export class HudUI {
         }
       });
       ctx.stroke();
+    }
+
+    ctx.fillStyle = "rgba(122, 142, 156, 0.62)";
+    for (const obstacle of biome.obstacles) {
+      const p = project(obstacle.center);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, obstacle.radius * mapScale, 0, Math.PI * 2);
+      ctx.fill();
     }
 
     const core = project(CORE_WORLD_POSITION);

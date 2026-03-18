@@ -4,7 +4,7 @@ import {
   resolveNearestLaneId,
   validatePlacement,
 } from "../src/game/systems/buildPlacement";
-import type { LaneDefinition, TrapState, TowerState, Vec3 } from "../src/game/types";
+import type { LaneDefinition, MapObstacle, TrapState, TowerState, Vec3 } from "../src/game/types";
 
 function v3(x: number, z: number): Vec3 {
   return { x, y: 0, z };
@@ -46,6 +46,18 @@ const traps: TrapState[] = [
   },
 ];
 
+const obstacles: MapObstacle[] = [
+  {
+    id: "obs-a",
+    center: v3(-6, -6),
+    radius: 1.8,
+    height: 2.4,
+    style: "rock",
+    blocksGround: true,
+    blocksHero: true,
+  },
+];
+
 describe("build placement rules", () => {
   it("allows valid freeform placement", () => {
     const result = validatePlacement(v3(-8, -8), 250, 80, towers, traps, v3(12, 0), 3.6, 1.25);
@@ -65,6 +77,16 @@ describe("build placement rules", () => {
   it("rejects placement when gold is insufficient", () => {
     const result = validatePlacement(v3(-8, -8), 20, 80, towers, traps, v3(12, 0), 3.6, 1.25);
     expect(result).toEqual({ canPlace: false, blockReason: "insufficient-gold" });
+  });
+
+  it("rejects overlap with map obstacles", () => {
+    const result = validatePlacement(v3(-6.2, -6), 220, 80, towers, traps, v3(12, 0), 3.6, 1.25, obstacles, 0.55);
+    expect(result).toEqual({ canPlace: false, blockReason: "obstacle" });
+  });
+
+  it("rejects placement when it would block enemy path", () => {
+    const result = validatePlacement(v3(-8, -8), 220, 80, towers, traps, v3(12, 0), 3.6, 1.25, [], 0.55, true);
+    expect(result).toEqual({ canPlace: false, blockReason: "blocks-path" });
   });
 
   it("finds the nearest sell target within radius", () => {
