@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { computeDampingAlpha, resolveCameraLockId } from "../src/game/render/cameraMath";
+import {
+  clampCameraPitch,
+  computeCameraRigPosition,
+  computeDampingAlpha,
+  forwardFromYawPitch,
+  rightFromYaw,
+} from "../src/game/render/cameraMath";
+import { add, mul } from "../src/game/utils/math";
 
 describe("camera math", () => {
   it("computes frame-rate independent damping alpha", () => {
@@ -14,47 +21,35 @@ describe("camera math", () => {
     expect(computeDampingAlpha(8, 0)).toBe(0);
   });
 
-  it("keeps current lock when challenger is not enough better", () => {
-    const lockId = resolveCameraLockId({
-      currentLockId: "enemy-a",
-      bestCandidateId: "enemy-b",
-      bestCandidateDistanceSq: 14,
-      currentLockFound: true,
-      currentLockDistanceSq: 16,
-    });
-    expect(lockId).toBe("enemy-a");
+  it("clamps camera pitch safely", () => {
+    expect(clampCameraPitch(-2, -0.7, 0.2)).toBeCloseTo(-0.7, 5);
+    expect(clampCameraPitch(0.8, -0.7, 0.2)).toBeCloseTo(0.2, 5);
+    expect(clampCameraPitch(-0.3, -0.7, 0.2)).toBeCloseTo(-0.3, 5);
   });
 
-  it("switches lock when challenger is significantly better", () => {
-    const lockId = resolveCameraLockId({
-      currentLockId: "enemy-a",
-      bestCandidateId: "enemy-b",
-      bestCandidateDistanceSq: 6,
-      currentLockFound: true,
-      currentLockDistanceSq: 16,
-    });
-    expect(lockId).toBe("enemy-b");
+  it("produces stable forward/right basis from yaw", () => {
+    const forward = forwardFromYawPitch(Math.PI / 2, 0);
+    const right = rightFromYaw(Math.PI / 2);
+    expect(forward.x).toBeCloseTo(1, 5);
+    expect(forward.z).toBeCloseTo(0, 5);
+    expect(right.x).toBeCloseTo(0, 5);
+    expect(right.z).toBeCloseTo(1, 5);
   });
 
-  it("switches lock when current lock is invalid", () => {
-    const lockId = resolveCameraLockId({
-      currentLockId: "enemy-a",
-      bestCandidateId: "enemy-c",
-      bestCandidateDistanceSq: 20,
-      currentLockFound: false,
-      currentLockDistanceSq: Number.POSITIVE_INFINITY,
-    });
-    expect(lockId).toBe("enemy-c");
+  it("computes right-shoulder follow position from yaw/pitch", () => {
+    const position = computeCameraRigPosition({ x: 8, y: 1.35, z: 0 }, -Math.PI / 2, -0.35, 6.2, 0.95, 0.35);
+    expect(position.x).toBeGreaterThan(8);
+    expect(position.y).toBeGreaterThan(1.35);
+    expect(position.z).toBeCloseTo(-0.95, 2);
   });
 
-  it("clears lock when no active candidate exists", () => {
-    const lockId = resolveCameraLockId({
-      currentLockId: "enemy-a",
-      bestCandidateId: null,
-      bestCandidateDistanceSq: Number.POSITIVE_INFINITY,
-      currentLockFound: false,
-      currentLockDistanceSq: Number.POSITIVE_INFINITY,
-    });
-    expect(lockId).toBeNull();
+  it("maps strafe sign to camera right/left as expected", () => {
+    const yaw = -Math.PI / 2;
+    const right = rightFromYaw(yaw);
+    const hero = { x: 8, y: 0, z: 0 };
+    const moveRight = add(hero, mul(right, 1));
+    const moveLeft = add(hero, mul(right, -1));
+    expect(moveRight.z).toBeLessThan(hero.z);
+    expect(moveLeft.z).toBeGreaterThan(hero.z);
   });
 });

@@ -61,6 +61,41 @@ body::before {
   gap: 0.65rem;
 }
 
+#crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  transform: translate(-50%, -50%);
+  border: 2px solid rgba(244, 241, 200, 0.9);
+  border-radius: 50%;
+  box-shadow: 0 0 10px rgba(244, 241, 200, 0.35);
+}
+
+#crosshair::before,
+#crosshair::after {
+  content: "";
+  position: absolute;
+  background: rgba(244, 241, 200, 0.9);
+}
+
+#crosshair::before {
+  left: 50%;
+  top: -6px;
+  width: 2px;
+  height: 30px;
+  transform: translateX(-50%);
+}
+
+#crosshair::after {
+  top: 50%;
+  left: -6px;
+  width: 30px;
+  height: 2px;
+  transform: translateY(-50%);
+}
+
 .hud-top,
 .hud-bottom {
   display: grid;

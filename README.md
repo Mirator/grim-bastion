@@ -20,12 +20,13 @@ npm test
 
 ## Controls
 
-- `WASD` move hero
-- Mouse aim, `LMB` attack, `RMB` sell in build mode
+- `WASD` move hero (camera-relative)
+- Mouse look (pointer lock), center crosshair aim, `LMB` attack, `RMB` sell in build mode
 - `Q` / `E` cast loadout abilities
 - `Space` dash
 - `R` cycle weapon
 - `L` switch ability loadout preset
+- `1-8` select build item, `[` / `]` cycle build selection
 - `B` toggle build/combat mode
 - `N` start wave
 - `1/2/3` pick upgrades in upgrade phase

@@ -44,6 +44,7 @@ export class HudUI {
     this.root = root;
     this.events = events;
     this.root.innerHTML = `
+      <div id="crosshair" aria-hidden="true"></div>
       <div class="hud-top">
         <div class="hud-panel" id="resources"></div>
         <div class="hud-panel" id="wave"></div>
@@ -53,9 +54,9 @@ export class HudUI {
         <div class="hud-panel mode" id="mode"></div>
         <div class="hud-panel controls">
           <h3>Controls</h3>
-          <p>WASD move, mouse aim + fire, Q/E abilities, Space dash.</p>
+          <p>Mouse look (locked), center crosshair aim, LMB fire, Q/E abilities.</p>
           <p>B toggle build, N start wave, 1/2/3 choose upgrades.</p>
-          <p>R switch weapon, L switch loadout, F fullscreen.</p>
+          <p>1-8 select build, [ / ] cycle build, R weapon, L loadout, F fullscreen.</p>
         </div>
         <div class="hud-panel actions">
           <button id="start-run">Start Run (Enter)</button>

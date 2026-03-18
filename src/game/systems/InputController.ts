@@ -9,10 +9,14 @@ export interface InputState {
   toggleBuild: boolean;
   startWave: boolean;
   startRun: boolean;
-  confirmUpgradeIndex: number | null;
+  digitHotkey: number | null;
   cycleWeapon: boolean;
   switchLoadout: boolean;
   toggleFullscreen: boolean;
+  cycleBuildNext: boolean;
+  cycleBuildPrev: boolean;
+  lookDeltaX: number;
+  lookDeltaY: number;
   mouseNdcX: number;
   mouseNdcY: number;
   pointerLocked: boolean;
@@ -32,12 +36,25 @@ const KEY_BINDINGS = {
   right: ["KeyD", "ArrowRight"],
 };
 
+export function digitHotkeyFromCode(code: string): number | null {
+  if (!code.startsWith("Digit")) {
+    return null;
+  }
+  const value = Number(code.slice(5));
+  if (!Number.isInteger(value) || value < 1 || value > 8) {
+    return null;
+  }
+  return value - 1;
+}
+
 export class InputController {
   private keysDown = new Set<string>();
 
   private buttonsDown = new Set<number>();
 
   private pointer = { x: 0, y: 0 };
+
+  private lookDelta = { x: 0, y: 0 };
 
   private transient: Record<string, boolean> = {};
 
@@ -79,9 +96,13 @@ export class InputController {
     const height = Math.max(1, viewport.height);
     const localMouseX = Math.max(0, Math.min(width, this.pointer.x - viewport.left));
     const localMouseY = Math.max(0, Math.min(height, this.pointer.y - viewport.top));
+    const lookDeltaX = this.lookDelta.x;
+    const lookDeltaY = this.lookDelta.y;
+    this.lookDelta.x = 0;
+    this.lookDelta.y = 0;
 
     const moveX = this.axis(KEY_BINDINGS.left, KEY_BINDINGS.right);
-    const moveZ = this.axis(KEY_BINDINGS.forward, KEY_BINDINGS.backward);
+    const moveZ = this.axis(KEY_BINDINGS.backward, KEY_BINDINGS.forward);
 
     const state: InputState = {
       moveX,
@@ -94,10 +115,14 @@ export class InputController {
       toggleBuild: this.consumeTransient("toggleBuild"),
       startWave: this.consumeTransient("startWave"),
       startRun: this.consumeTransient("startRun"),
-      confirmUpgradeIndex: this.consumeUpgradeChoice(),
+      digitHotkey: this.consumeDigitHotkey(),
       cycleWeapon: this.consumeTransient("cycleWeapon"),
       switchLoadout: this.consumeTransient("switchLoadout"),
       toggleFullscreen: this.consumeTransient("toggleFullscreen"),
+      cycleBuildNext: this.consumeTransient("cycleBuildNext"),
+      cycleBuildPrev: this.consumeTransient("cycleBuildPrev"),
+      lookDeltaX,
+      lookDeltaY,
       mouseNdcX: (localMouseX / width) * 2 - 1,
       mouseNdcY: -((localMouseY / height) * 2 - 1),
       pointerLocked: this.pointerLocked,
@@ -120,10 +145,9 @@ export class InputController {
     return false;
   }
 
-  private consumeUpgradeChoice(): number | null {
-    const keys = ["upgrade0", "upgrade1", "upgrade2"];
-    for (let index = 0; index < keys.length; index += 1) {
-      const key = keys[index] as string;
+  private consumeDigitHotkey(): number | null {
+    for (let index = 0; index < 8; index += 1) {
+      const key = `digit${index}` as string;
       if (this.transient[key]) {
         this.transient[key] = false;
         return index;
@@ -134,6 +158,11 @@ export class InputController {
 
   private onKeyDown = (event: KeyboardEvent): void => {
     this.keysDown.add(event.code);
+    const digitHotkey = digitHotkeyFromCode(event.code);
+    if (digitHotkey !== null) {
+      this.transient[`digit${digitHotkey}`] = true;
+    }
+
     switch (event.code) {
       case "KeyB":
         this.transient.toggleBuild = true;
@@ -163,18 +192,17 @@ export class InputController {
       case "KeyF":
         this.transient.toggleFullscreen = true;
         break;
-      case "Digit1":
-        this.transient.upgrade0 = true;
+      case "BracketRight":
+        this.transient.cycleBuildNext = true;
         break;
-      case "Digit2":
-        this.transient.upgrade1 = true;
-        break;
-      case "Digit3":
-        this.transient.upgrade2 = true;
+      case "BracketLeft":
+        this.transient.cycleBuildPrev = true;
         break;
       default:
         break;
     }
+
+    this.requestPointerLock();
   };
 
   private onKeyUp = (event: KeyboardEvent): void => {
@@ -183,6 +211,7 @@ export class InputController {
 
   private onMouseDown = (event: MouseEvent): void => {
     this.buttonsDown.add(event.button);
+    this.requestPointerLock();
   };
 
   private onMouseUp = (event: MouseEvent): void => {
@@ -193,6 +222,8 @@ export class InputController {
     if (this.pointerLocked) {
       this.pointer.x = Math.min(window.innerWidth, Math.max(0, this.pointer.x + event.movementX));
       this.pointer.y = Math.min(window.innerHeight, Math.max(0, this.pointer.y + event.movementY));
+      this.lookDelta.x += event.movementX;
+      this.lookDelta.y += event.movementY;
       return;
     }
     this.pointer.x = event.clientX;
@@ -206,11 +237,7 @@ export class InputController {
   private onClick = (event: MouseEvent): void => {
     this.pointer.x = event.clientX;
     this.pointer.y = event.clientY;
-    if (this.target instanceof HTMLElement && document.pointerLockElement !== this.target) {
-      this.target.requestPointerLock().catch(() => {
-        // Ignore; pointer lock is optional.
-      });
-    }
+    this.requestPointerLock();
   };
 
   private onContextMenu = (event: MouseEvent): void => {
@@ -221,5 +248,19 @@ export class InputController {
     this.keysDown.clear();
     this.buttonsDown.clear();
     this.transient = {};
+    this.lookDelta.x = 0;
+    this.lookDelta.y = 0;
   };
+
+  private requestPointerLock(): void {
+    if (!(this.target instanceof HTMLElement)) {
+      return;
+    }
+    if (document.pointerLockElement === this.target) {
+      return;
+    }
+    this.target.requestPointerLock().catch(() => {
+      // Ignore; pointer lock can fail without a valid user gesture.
+    });
+  }
 }

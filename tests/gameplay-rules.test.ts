@@ -5,6 +5,7 @@ import {
   computeStatusMoveMultiplier,
   computeWitchAuraMultiplier,
   nextCombatViewMode,
+  resolveDigitHotkeyAction,
   resolveFinalStandState,
   shouldTriggerLaneEcho,
   shouldAwardEnemyRewards,
@@ -62,5 +63,11 @@ describe("gameplay rules", () => {
     expect(shouldTriggerLaneEcho(false, 0.2, 0.1)).toBe(false);
     expect(shouldTriggerLaneEcho(true, 0.2, 0.25)).toBe(false);
     expect(shouldTriggerLaneEcho(true, 0.2, 0.15)).toBe(true);
+  });
+
+  it("routes digit hotkeys to upgrade or build action by mode", () => {
+    expect(resolveDigitHotkeyAction("upgrade", 1, 8)).toEqual({ upgradeIndex: 1, buildIndex: null });
+    expect(resolveDigitHotkeyAction("upgrade", 5, 8)).toEqual({ upgradeIndex: null, buildIndex: null });
+    expect(resolveDigitHotkeyAction("build", 5, 8)).toEqual({ upgradeIndex: null, buildIndex: 5 });
   });
 });

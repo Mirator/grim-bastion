@@ -60,3 +60,44 @@ Original prompt: Implement whole [grim_bastion_td_concept.md](grim_bastion_td_co
   - `npm run build` (passing)
   - Playwright smoke loop (`scripts/web_game_playwright_client.js`) with screenshot/state inspection and no new console errors.
   - Confirmed active-wave progression in build mode and confirmed escaped enemies reduced core HP without granting kill rewards (gold/essence unchanged).
+
+## 2026-03-18
+- Began third-person rework implementation (right-shoulder camera + center-ray 3D aiming + always-on pointer-lock intent).
+- Replaced lock-on/isometric camera logic with yaw/pitch camera rig in renderer and added camera diagnostics (`yaw`, `pitch`, `aimPoint`).
+- Added center-screen aim sampling pipeline that returns both `aimPoint3D` and `groundPoint`.
+- Reworked reticle frame model to preserve 3D aim while snapping build selection to ground.
+- Updated hero movement to camera-relative basis and wired primary facing/attack direction to 3D aim point.
+- Added digit/build input plumbing (`Digit1..Digit8`, build cycling via `[`/`]`) and pointer-lock reacquire calls.
+- Updated HUD + CSS to show a center crosshair and new control hints.
+- Added/updated tests for camera math, aim fallback math, reticle behavior, and digit hotkey routing.
+- Verification after implementation:
+  - `npm test` passed (10 files, 36 tests).
+  - `npm run build` passed.
+  - Playwright run executed via `scripts/web_game_playwright_client.js` with artifacts in `output/web-game-third-person/`.
+  - Reviewed screenshots (`shot-0/1/2.png`) and confirmed camera is now behind the hero with center-screen crosshair and 3D aim diagnostics present in snapshot JSON.
+  - No console/page error artifacts were emitted during this run.
+- TODO / next-pass suggestions:
+  - Add richer Playwright choreography for explicit mouse-look sweeps (the current local client supports limited pointer movement patterns).
+  - Tune camera sensitivity/pitch clamps after live gameplay feedback, especially for very fast mouse movement and tight spaces.
+- Final verification pass (post-test additions):
+  - `npm test` passed again.
+  - `npm run build` passed again.
+- 2026-03-18 quick fix: corrected camera-relative forward/backward axis mapping so `W/ArrowUp` moves forward (toward camera forward) instead of backward.
+- Re-verified:
+  - `npm test` passed.
+  - `npm run build` passed.
+  - Playwright forward check run in `output/web-game-forward-check/`; state confirms hero x moved from 8.0 to ~4.33 when holding forward (expected with current camera yaw).
+- 2026-03-18 horizontal-control fix:
+  - Flipped camera right-basis sign in `rightFromYaw` so strafe mapping aligns with screen-space expectations (`D` right, `A` left).
+  - Flipped camera yaw accumulation sign for mouse X so mouse-right turns camera-right and mouse-left turns camera-left.
+  - Updated camera math tests for right-vector and right-shoulder offset sign; added directional strafe sanity assertion.
+- Verification:
+  - `npm test` passed (10 files, 37 tests).
+  - `npm run build` passed.
+  - Playwright strafe checks:
+    - `output/web-game-strafe-right-check/` -> hero z moved negative (screen-right under current yaw).
+    - `output/web-game-strafe-left-check/` -> hero z moved positive (screen-left under current yaw).
+  - Playwright mouse-look checks (post-fix):
+    - `output/web-game-look-right-check-fixed/` -> yaw decreased from baseline (camera rotated right in current convention).
+    - `output/web-game-look-left-check-fixed/` -> yaw increased from baseline (camera rotated left).
+  - No new console/page error artifacts were produced.

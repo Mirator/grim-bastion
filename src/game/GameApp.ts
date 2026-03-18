@@ -19,6 +19,7 @@ import {
   computeEnemyMoveSpeed,
   computeWitchAuraMultiplier,
   nextCombatViewMode,
+  resolveDigitHotkeyAction,
   resolveFinalStandState,
   shouldTriggerLaneEcho,
   shouldAwardEnemyRewards,
@@ -65,6 +66,16 @@ const LANE_ECHO_CHANCE = 0.22;
 const LANE_ECHO_DAMAGE_MULTIPLIER = 0.55;
 const FINAL_STAND_THRESHOLD = 0.3;
 const FINAL_STAND_MULTIPLIER = 1.22;
+const BUILD_HOTKEY_ORDER: Array<TowerType | TrapType> = [
+  "ballista",
+  "frost-obelisk",
+  "bombard",
+  "arc-tower",
+  "shrine",
+  "spike-trap",
+  "push-trap",
+  "flame-trap",
+];
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -130,8 +141,9 @@ export class GameApp {
     this.audio = new AudioManager(this.save.settings.masterVolume);
 
     this.state = this.createInitialState();
+    this.renderer.initializeCameraRig(this.state.hero.position, this.state.hero.facing);
     this.currentInput = this.sampleInput();
-    this.reticleFrame = buildReticleFrameData(v3(), this.state.buildNodes);
+    this.reticleFrame = buildReticleFrameData(v3(), v3(), this.state.buildNodes);
 
     this.waveDirector = new WaveDirector({
       spawnEnemy: (enemyType, laneId, isElite, isBoss) => this.spawnEnemy(enemyType, laneId, isElite, isBoss),
@@ -152,7 +164,7 @@ export class GameApp {
     });
 
     this.exposeAutomationHooks();
-    this.updateReticleFrame(FIXED_DT, this.currentInput);
+    this.updateReticleFrame(FIXED_DT);
     this.hud.update(this.state);
     this.renderer.render(this.state, FIXED_DT);
   }
@@ -188,6 +200,7 @@ export class GameApp {
 
     this.currentInput = this.sampleInput();
     this.handleGlobalInput(this.currentInput);
+    this.renderer.stepCameraRig(this.state.hero.position, this.currentInput.lookDeltaX, this.currentInput.lookDeltaY, frameDt);
     this.accumulator += frameDt;
     while (this.accumulator >= FIXED_DT) {
       this.update(FIXED_DT, this.currentInput);
@@ -207,6 +220,7 @@ export class GameApp {
     for (let i = 0; i < steps; i += 1) {
       this.currentInput = this.sampleInput();
       this.handleGlobalInput(this.currentInput);
+      this.renderer.stepCameraRig(this.state.hero.position, this.currentInput.lookDeltaX, this.currentInput.lookDeltaY, dt);
       this.update(dt, this.currentInput);
       lastStepDt = dt;
     }
@@ -318,8 +332,9 @@ export class GameApp {
     this.state = fresh;
     this.pendingOverchargeTimer = 0;
     this.loadoutCycle = 0;
+    this.renderer.initializeCameraRig(this.state.hero.position, this.state.hero.facing);
     this.syncBiomeNodes();
-    this.updateReticleFrame(FIXED_DT, this.currentInput);
+    this.updateReticleFrame(FIXED_DT);
     this.syncHeroPhysics();
     this.hud.update(this.state);
   }
@@ -387,8 +402,19 @@ export class GameApp {
       this.switchLoadout();
     }
 
-    if (this.state.mode === "upgrade" && input.confirmUpgradeIndex !== null) {
-      this.pickUpgrade(input.confirmUpgradeIndex);
+    if (input.cycleBuildNext) {
+      this.cycleBuildSelection(1);
+    }
+
+    if (input.cycleBuildPrev) {
+      this.cycleBuildSelection(-1);
+    }
+
+    const digitAction = resolveDigitHotkeyAction(this.state.mode, input.digitHotkey, BUILD_HOTKEY_ORDER.length);
+    if (digitAction.upgradeIndex !== null) {
+      this.pickUpgrade(digitAction.upgradeIndex);
+    } else if (digitAction.buildIndex !== null) {
+      this.selectBuildByIndex(digitAction.buildIndex);
     }
 
     if (this.state.mode === "build" && input.firePrimary) {
@@ -402,7 +428,7 @@ export class GameApp {
 
   private update(dt: number, input: InputState): void {
     this.state.time += dt;
-    this.updateReticleFrame(dt, input);
+    this.updateReticleFrame(dt);
     this.updateHero(dt, input);
     this.updateHeroAbilities(dt, input);
     this.updateShrines(dt);
@@ -469,7 +495,13 @@ export class GameApp {
       this.state.hero.abilityCooldowns[ability] = Math.max(0, this.state.hero.abilityCooldowns[ability] - dt);
     });
 
-    const inputDir = normalize(v3(input.moveX, 0, input.moveZ));
+    const movementBasis = this.renderer.getMovementBasis();
+    const inputDir = normalize(
+      add(
+        mul(movementBasis.right, input.moveX),
+        mul(movementBasis.forward, input.moveZ),
+      ),
+    );
     const speed = this.state.hero.stats.moveSpeed * this.state.modifiers.heroMoveSpeedMultiplier * this.finalStandMultiplier();
     this.state.hero.velocity = mul(inputDir, speed);
     this.state.hero.position = add(this.state.hero.position, mul(this.state.hero.velocity, dt));
@@ -477,7 +509,7 @@ export class GameApp {
     this.state.hero.position.x = clamp(this.state.hero.position.x, -28, 16);
     this.state.hero.position.z = clamp(this.state.hero.position.z, -19, 19);
 
-    const reticle = this.reticleFrame.world;
+    const reticle = this.reticleFrame.aimPoint3D;
     const facing = normalize(sub(reticle, this.state.hero.position));
     if (length2D(facing) > 0.001) {
       this.state.hero.facing.x = facing.x;
@@ -1480,11 +1512,29 @@ export class GameApp {
     this.state.buildNodes = biome.buildNodes.map((node) => ({ ...node, occupiedBy: null }));
   }
 
-  private updateReticleFrame(dt: number, input: InputState): void {
-    const reticleWorld = this.renderer.screenToGround(input.mouseNdcX, input.mouseNdcY);
-    this.reticleFrame = buildReticleFrameData(reticleWorld, this.state.buildNodes);
+  private updateReticleFrame(dt: number): void {
+    const aimSample = this.renderer.sampleAimTarget();
+    this.reticleFrame = buildReticleFrameData(aimSample.aimPoint3D, aimSample.groundPoint, this.state.buildNodes);
     this.state.selectedNodeId = this.reticleFrame.selectedNodeId;
-    this.renderer.setReticle(this.reticleFrame.world, dt);
+    this.renderer.setReticle(this.reticleFrame.aimPoint3D, dt);
+  }
+
+  private selectBuildByIndex(index: number): void {
+    if (index < 0 || index >= BUILD_HOTKEY_ORDER.length) {
+      return;
+    }
+    this.state.selectedBuildType = BUILD_HOTKEY_ORDER[index]!;
+  }
+
+  private cycleBuildSelection(step: number): void {
+    const count = BUILD_HOTKEY_ORDER.length;
+    if (count === 0) {
+      return;
+    }
+    const current = BUILD_HOTKEY_ORDER.indexOf(this.state.selectedBuildType);
+    const safeCurrent = current >= 0 ? current : 0;
+    const next = (safeCurrent + step + count) % count;
+    this.state.selectedBuildType = BUILD_HOTKEY_ORDER[next]!;
   }
 
   private tryPlaceAtSelection(): void {
@@ -1716,7 +1766,9 @@ export class GameApp {
         camera: {
           position: camera.position,
           focus: camera.focus,
-          lockTargetId: camera.lockTargetId,
+          yaw: camera.yaw,
+          pitch: camera.pitch,
+          aimPoint: camera.aimPoint,
         },
       };
 

@@ -57,6 +57,29 @@ export function shouldTriggerLaneEcho(enabled: boolean, chance: number, roll: nu
   return safeRoll < clamp(chance, 0, 1);
 }
 
+export interface DigitHotkeyAction {
+  upgradeIndex: number | null;
+  buildIndex: number | null;
+}
+
+export function resolveDigitHotkeyAction(mode: GameMode, digitHotkey: number | null, maxBuildChoices: number): DigitHotkeyAction {
+  if (digitHotkey === null || digitHotkey < 0) {
+    return { upgradeIndex: null, buildIndex: null };
+  }
+
+  if (mode === "upgrade") {
+    return {
+      upgradeIndex: digitHotkey < 3 ? digitHotkey : null,
+      buildIndex: null,
+    };
+  }
+
+  return {
+    upgradeIndex: null,
+    buildIndex: digitHotkey < maxBuildChoices ? digitHotkey : null,
+  };
+}
+
 export interface FinalStandState {
   active: boolean;
   healthRatio: number;

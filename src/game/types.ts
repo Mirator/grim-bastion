@@ -440,6 +440,8 @@ export interface RenderTextSnapshot {
   camera?: {
     position: Vec3;
     focus: Vec3;
-    lockTargetId: string | null;
+    yaw: number;
+    pitch: number;
+    aimPoint: Vec3;
   };
 }

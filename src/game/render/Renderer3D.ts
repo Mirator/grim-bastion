@@ -1,6 +1,12 @@
 import * as THREE from "three";
-import type { EnemyState, MutableGameState, Vec3 } from "../types";
-import { computeDampingAlpha, resolveCameraLockId } from "./cameraMath";
+import type { MutableGameState, Vec3 } from "../types";
+import {
+  clampCameraPitch,
+  computeCameraFocusPoint,
+  computeCameraRigPosition,
+  computeDampingAlpha,
+  rightFromYaw,
+} from "./cameraMath";
 
 function setObjectPosition(object: THREE.Object3D, position: Vec3): void {
   object.position.set(position.x, position.y, position.z);
@@ -8,6 +14,32 @@ function setObjectPosition(object: THREE.Object3D, position: Vec3): void {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+export interface AimSample {
+  aimPoint3D: Vec3;
+  groundPoint: Vec3;
+  rayDirection: Vec3;
+}
+
+export function resolveAimPoint3D(
+  objectHit: Vec3 | null,
+  groundHit: Vec3 | null,
+  rayOrigin: Vec3,
+  rayDirection: Vec3,
+  fallbackDistance = 32,
+): Vec3 {
+  if (objectHit) {
+    return { x: objectHit.x, y: objectHit.y, z: objectHit.z };
+  }
+  if (groundHit) {
+    return { x: groundHit.x, y: groundHit.y, z: groundHit.z };
+  }
+  return {
+    x: rayOrigin.x + rayDirection.x * fallbackDistance,
+    y: rayOrigin.y + rayDirection.y * fallbackDistance,
+    z: rayOrigin.z + rayDirection.z * fallbackDistance,
+  };
 }
 
 function hueForEnemy(type: string): number {
@@ -40,9 +72,25 @@ export class Renderer3D {
 
   private static readonly ARENA_MAX_Z = 19;
 
-  private static readonly CAMERA_POSITION_LAMBDA = 9.75;
+  private static readonly CAMERA_POSITION_LAMBDA = 11;
 
-  private static readonly CAMERA_FOCUS_LAMBDA = 12;
+  private static readonly CAMERA_FOCUS_LAMBDA = 13;
+
+  private static readonly CAMERA_YAW_SENSITIVITY = 0.0024;
+
+  private static readonly CAMERA_PITCH_SENSITIVITY = 0.0019;
+
+  private static readonly CAMERA_MIN_PITCH = -0.78;
+
+  private static readonly CAMERA_MAX_PITCH = 0.22;
+
+  private static readonly CAMERA_FOLLOW_DISTANCE = 6.2;
+
+  private static readonly CAMERA_SHOULDER_OFFSET = 0.95;
+
+  private static readonly CAMERA_HEIGHT_OFFSET = 0.35;
+
+  private static readonly CAMERA_FOCUS_DISTANCE = 18;
 
   private static readonly RETICLE_LAMBDA = 30;
 
@@ -88,19 +136,27 @@ export class Renderer3D {
 
   private reticleTarget = new THREE.Vector3();
 
-  private raycastNdc = new THREE.Vector2();
+  private raycastNdc = new THREE.Vector2(0, 0);
 
   private raycastGroundHit = new THREE.Vector3();
 
+  private raycastForwardFallback = new THREE.Vector3();
+
   private lastGroundPoint = new THREE.Vector3(8, 0, 0);
+
+  private lastAimPoint = new THREE.Vector3(8, 0, 0);
 
   private cameraDesiredPosition = new THREE.Vector3();
 
-  private cameraDesiredFocus = new THREE.Vector3(0, 1.2, 0);
+  private cameraDesiredFocus = new THREE.Vector3();
 
-  private cameraCurrentFocus = new THREE.Vector3(0, 1.2, 0);
+  private cameraCurrentFocus = new THREE.Vector3();
 
-  private cameraLockTargetId: string | null = null;
+  private cameraYaw = -Math.PI / 2;
+
+  private cameraPitch = -0.34;
+
+  private cameraPivot = new THREE.Vector3(8, 1.35, 0);
 
   private readonly biomeBackgroundColors = [
     new THREE.Color("#2b3444"),
@@ -118,9 +174,9 @@ export class Renderer3D {
     this.worldPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     this.raycaster = new THREE.Raycaster();
 
-    this.camera = new THREE.PerspectiveCamera(55, Math.max(1, window.innerWidth) / Math.max(1, window.innerHeight), 0.1, 230);
-    this.camera.position.set(0, 16, 19);
-    this.camera.lookAt(0, 0, 0);
+    this.camera = new THREE.PerspectiveCamera(62, Math.max(1, window.innerWidth) / Math.max(1, window.innerHeight), 0.1, 230);
+    this.camera.position.set(12.5, 4.8, 0);
+    this.camera.lookAt(8, 1.2, 0);
 
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
     this.renderer.shadowMap.enabled = false;
@@ -135,11 +191,10 @@ export class Renderer3D {
     this.scene.add(this.heroMesh);
 
     this.reticleMesh = new THREE.Mesh(
-      new THREE.TorusGeometry(0.35, 0.04, 8, 24),
-      new THREE.MeshBasicMaterial({ color: "#f4f1c8", transparent: true, opacity: 0.75 }),
+      new THREE.IcosahedronGeometry(0.15, 1),
+      new THREE.MeshBasicMaterial({ color: "#f4f1c8", transparent: true, opacity: 0.9 }),
     );
-    this.reticleMesh.rotation.x = Math.PI / 2;
-    this.reticleMesh.position.y = 0.03;
+    this.reticleMesh.position.y = 1;
     this.scene.add(this.reticleMesh);
 
     this.addLighting();
@@ -162,28 +217,124 @@ export class Renderer3D {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   };
 
-  screenToGround(mouseNdcX: number, mouseNdcY: number): Vec3 {
-    this.raycastNdc.set(mouseNdcX, mouseNdcY);
-    this.raycaster.setFromCamera(this.raycastNdc, this.camera);
-    const hit = this.raycaster.ray.intersectPlane(this.worldPlane, this.raycastGroundHit);
-    if (hit) {
-      this.lastGroundPoint.copy(hit);
+  initializeCameraRig(heroPosition: Vec3, heroFacing: Vec3): void {
+    this.cameraPivot.set(heroPosition.x, heroPosition.y + 1.35, heroPosition.z);
+    this.cameraYaw = Math.atan2(heroFacing.x, heroFacing.z);
+    this.cameraPitch = clampCameraPitch(this.cameraPitch, Renderer3D.CAMERA_MIN_PITCH, Renderer3D.CAMERA_MAX_PITCH);
+    this.applyCameraRigImmediate();
+  }
+
+  stepCameraRig(heroPosition: Vec3, lookDeltaX: number, lookDeltaY: number, frameDt: number): void {
+    if (lookDeltaX !== 0 || lookDeltaY !== 0) {
+      this.cameraYaw -= lookDeltaX * Renderer3D.CAMERA_YAW_SENSITIVITY;
+      this.cameraPitch = clampCameraPitch(
+        this.cameraPitch - lookDeltaY * Renderer3D.CAMERA_PITCH_SENSITIVITY,
+        Renderer3D.CAMERA_MIN_PITCH,
+        Renderer3D.CAMERA_MAX_PITCH,
+      );
     }
 
+    this.cameraPivot.set(heroPosition.x, heroPosition.y + 1.35, heroPosition.z);
+    const desiredPosition = computeCameraRigPosition(
+      { x: this.cameraPivot.x, y: this.cameraPivot.y, z: this.cameraPivot.z },
+      this.cameraYaw,
+      this.cameraPitch,
+      Renderer3D.CAMERA_FOLLOW_DISTANCE,
+      Renderer3D.CAMERA_SHOULDER_OFFSET,
+      Renderer3D.CAMERA_HEIGHT_OFFSET,
+    );
+    this.cameraDesiredPosition.set(desiredPosition.x, desiredPosition.y, desiredPosition.z);
+
+    const desiredFocus = computeCameraFocusPoint(
+      { x: this.cameraPivot.x, y: this.cameraPivot.y, z: this.cameraPivot.z },
+      this.cameraYaw,
+      this.cameraPitch,
+      Renderer3D.CAMERA_FOCUS_DISTANCE,
+    );
+    this.cameraDesiredFocus.set(desiredFocus.x, desiredFocus.y, desiredFocus.z);
+
+    const positionAlpha = computeDampingAlpha(Renderer3D.CAMERA_POSITION_LAMBDA, frameDt);
+    this.dampVector(this.camera.position, this.cameraDesiredPosition, positionAlpha, Renderer3D.CAMERA_POSITION_DEADZONE_SQ);
+
+    const focusAlpha = computeDampingAlpha(Renderer3D.CAMERA_FOCUS_LAMBDA, frameDt);
+    this.dampVector(this.cameraCurrentFocus, this.cameraDesiredFocus, focusAlpha, Renderer3D.CAMERA_FOCUS_DEADZONE_SQ);
+    this.camera.lookAt(this.cameraCurrentFocus);
+  }
+
+  getMovementBasis(): { forward: Vec3; right: Vec3 } {
+    const right = rightFromYaw(this.cameraYaw);
+    const forward = { x: Math.sin(this.cameraYaw), y: 0, z: Math.cos(this.cameraYaw) };
+    return {
+      forward,
+      right,
+    };
+  }
+
+  sampleAimTarget(): AimSample {
+    this.raycaster.setFromCamera(this.raycastNdc, this.camera);
+
+    const rayDirection = this.raycaster.ray.direction;
+    const hitTargets: THREE.Object3D[] = [];
+    for (const mesh of this.enemyMeshes.values()) {
+      if (mesh.visible) {
+        hitTargets.push(mesh);
+      }
+    }
+
+    const objectHit = hitTargets.length > 0 ? this.raycaster.intersectObjects(hitTargets, false)[0] : undefined;
+    const groundHit = this.raycaster.ray.intersectPlane(this.worldPlane, this.raycastGroundHit);
+    const resolvedAimPoint = resolveAimPoint3D(
+      objectHit?.point ? { x: objectHit.point.x, y: objectHit.point.y, z: objectHit.point.z } : null,
+      groundHit ? { x: groundHit.x, y: groundHit.y, z: groundHit.z } : null,
+      {
+        x: this.raycaster.ray.origin.x,
+        y: this.raycaster.ray.origin.y,
+        z: this.raycaster.ray.origin.z,
+      },
+      {
+        x: rayDirection.x,
+        y: rayDirection.y,
+        z: rayDirection.z,
+      },
+    );
+    this.lastAimPoint.set(resolvedAimPoint.x, resolvedAimPoint.y, resolvedAimPoint.z);
+
+    if (groundHit) {
+      this.lastGroundPoint.copy(groundHit);
+    } else {
+      this.raycastForwardFallback.copy(rayDirection).multiplyScalar(20).add(this.raycaster.ray.origin);
+      this.lastGroundPoint.set(this.raycastForwardFallback.x, 0, this.raycastForwardFallback.z);
+    }
     this.lastGroundPoint.x = clamp(this.lastGroundPoint.x, Renderer3D.ARENA_MIN_X, Renderer3D.ARENA_MAX_X);
     this.lastGroundPoint.y = 0;
     this.lastGroundPoint.z = clamp(this.lastGroundPoint.z, Renderer3D.ARENA_MIN_Z, Renderer3D.ARENA_MAX_Z);
 
-    return { x: this.lastGroundPoint.x, y: 0, z: this.lastGroundPoint.z };
+    return {
+      aimPoint3D: {
+        x: this.lastAimPoint.x,
+        y: this.lastAimPoint.y,
+        z: this.lastAimPoint.z,
+      },
+      groundPoint: {
+        x: this.lastGroundPoint.x,
+        y: 0,
+        z: this.lastGroundPoint.z,
+      },
+      rayDirection: {
+        x: rayDirection.x,
+        y: rayDirection.y,
+        z: rayDirection.z,
+      },
+    };
   }
 
   setReticle(position: Vec3, frameDt: number): void {
-    this.reticleTarget.set(position.x, 0.03, position.z);
+    this.reticleTarget.set(position.x, position.y, position.z);
     const alpha = computeDampingAlpha(Renderer3D.RETICLE_LAMBDA, frameDt);
     this.dampVector(this.reticleMesh.position, this.reticleTarget, alpha, Renderer3D.RETICLE_DEADZONE_SQ);
   }
 
-  getCameraDiagnostics(): { position: Vec3; focus: Vec3; lockTargetId: string | null } {
+  getCameraDiagnostics(): { position: Vec3; focus: Vec3; yaw: number; pitch: number; aimPoint: Vec3 } {
     return {
       position: {
         x: this.camera.position.x,
@@ -195,13 +346,20 @@ export class Renderer3D {
         y: this.cameraCurrentFocus.y,
         z: this.cameraCurrentFocus.z,
       },
-      lockTargetId: this.cameraLockTargetId,
+      yaw: this.cameraYaw,
+      pitch: this.cameraPitch,
+      aimPoint: {
+        x: this.lastAimPoint.x,
+        y: this.lastAimPoint.y,
+        z: this.lastAimPoint.z,
+      },
     };
   }
 
   render(state: MutableGameState, frameDt: number): void {
+    void frameDt;
     this.updateEnvironmentColor(state);
-    this.updateHero(state, frameDt);
+    this.updateHero(state);
     this.syncEnemyMeshes(state);
     this.syncTowerMeshes(state);
     this.syncTrapMeshes(state);
@@ -258,71 +416,30 @@ export class Renderer3D {
     this.scene.background = this.biomeBackgroundColors[biomeIndex];
   }
 
-  private updateHero(state: MutableGameState, frameDt: number): void {
+  private updateHero(state: MutableGameState): void {
     setObjectPosition(this.heroMesh, { x: state.hero.position.x, y: state.hero.position.y + 0.8, z: state.hero.position.z });
     this.heroMesh.rotation.y = Math.atan2(state.hero.facing.x, state.hero.facing.z);
+  }
 
-    let bestEnemyId: string | null = null;
-    let bestEnemy: EnemyState | null = null;
-    let bestEnemyDistanceSq = Number.POSITIVE_INFINITY;
-    let currentLockFound = false;
-    let currentLockDistanceSq = Number.POSITIVE_INFINITY;
-    let lockEnemy: EnemyState | null = null;
-
-    for (const enemy of state.enemies) {
-      if (enemy.isDead) {
-        continue;
-      }
-
-      const dx = enemy.position.x - state.hero.position.x;
-      const dz = enemy.position.z - state.hero.position.z;
-      const distSq = dx * dx + dz * dz;
-
-      if (distSq < bestEnemyDistanceSq) {
-        bestEnemyDistanceSq = distSq;
-        bestEnemyId = enemy.id;
-        bestEnemy = enemy;
-      }
-
-      if (enemy.id === this.cameraLockTargetId) {
-        currentLockFound = true;
-        currentLockDistanceSq = distSq;
-        lockEnemy = enemy;
-      }
-    }
-
-    this.cameraLockTargetId = resolveCameraLockId({
-      currentLockId: this.cameraLockTargetId,
-      bestCandidateId: bestEnemyId,
-      bestCandidateDistanceSq: bestEnemyDistanceSq,
-      currentLockFound,
-      currentLockDistanceSq,
-    });
-
-    if (this.cameraLockTargetId === bestEnemyId) {
-      lockEnemy = bestEnemy;
-    } else if (lockEnemy?.id !== this.cameraLockTargetId) {
-      lockEnemy = null;
-    }
-
-    this.cameraDesiredPosition.set(
-      state.hero.position.x - 6.8,
-      11.5,
-      state.hero.position.z + 10.5,
+  private applyCameraRigImmediate(): void {
+    const desiredPosition = computeCameraRigPosition(
+      { x: this.cameraPivot.x, y: this.cameraPivot.y, z: this.cameraPivot.z },
+      this.cameraYaw,
+      this.cameraPitch,
+      Renderer3D.CAMERA_FOLLOW_DISTANCE,
+      Renderer3D.CAMERA_SHOULDER_OFFSET,
+      Renderer3D.CAMERA_HEIGHT_OFFSET,
     );
-    const positionAlpha = computeDampingAlpha(Renderer3D.CAMERA_POSITION_LAMBDA, frameDt);
-    this.dampVector(this.camera.position, this.cameraDesiredPosition, positionAlpha, Renderer3D.CAMERA_POSITION_DEADZONE_SQ);
+    this.camera.position.set(desiredPosition.x, desiredPosition.y, desiredPosition.z);
 
-    const focusX = lockEnemy
-      ? state.hero.position.x * 0.4 + lockEnemy.position.x * 0.6
-      : state.hero.position.x + state.hero.facing.x * 2.8;
-    const focusZ = lockEnemy
-      ? state.hero.position.z * 0.4 + lockEnemy.position.z * 0.6
-      : state.hero.position.z + state.hero.facing.z * 2.8;
-    this.cameraDesiredFocus.set(focusX, 1.2, focusZ);
-
-    const focusAlpha = computeDampingAlpha(Renderer3D.CAMERA_FOCUS_LAMBDA, frameDt);
-    this.dampVector(this.cameraCurrentFocus, this.cameraDesiredFocus, focusAlpha, Renderer3D.CAMERA_FOCUS_DEADZONE_SQ);
+    const focus = computeCameraFocusPoint(
+      { x: this.cameraPivot.x, y: this.cameraPivot.y, z: this.cameraPivot.z },
+      this.cameraYaw,
+      this.cameraPitch,
+      Renderer3D.CAMERA_FOCUS_DISTANCE,
+    );
+    this.cameraCurrentFocus.set(focus.x, focus.y, focus.z);
+    this.cameraDesiredFocus.copy(this.cameraCurrentFocus);
     this.camera.lookAt(this.cameraCurrentFocus);
   }
 

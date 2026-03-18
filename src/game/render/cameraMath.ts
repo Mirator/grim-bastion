@@ -1,15 +1,4 @@
-export interface CameraLockResolutionInput {
-  currentLockId: string | null;
-  bestCandidateId: string | null;
-  bestCandidateDistanceSq: number;
-  currentLockFound: boolean;
-  currentLockDistanceSq: number;
-  switchRatio?: number;
-  releaseDistanceSq?: number;
-}
-
-const DEFAULT_SWITCH_RATIO = 0.78;
-const DEFAULT_RELEASE_DISTANCE_SQ = 28 * 28;
+import type { Vec3 } from "../types";
 
 export function computeDampingAlpha(lambda: number, dt: number): number {
   if (lambda <= 0 || dt <= 0) {
@@ -19,36 +8,52 @@ export function computeDampingAlpha(lambda: number, dt: number): number {
   return Math.max(0, Math.min(1, alpha));
 }
 
-export function resolveCameraLockId(input: CameraLockResolutionInput): string | null {
-  const {
-    currentLockId,
-    bestCandidateId,
-    bestCandidateDistanceSq,
-    currentLockFound,
-    currentLockDistanceSq,
-    switchRatio = DEFAULT_SWITCH_RATIO,
-    releaseDistanceSq = DEFAULT_RELEASE_DISTANCE_SQ,
-  } = input;
-
-  if (!bestCandidateId) {
-    return null;
+export function clampCameraPitch(pitch: number, minPitch: number, maxPitch: number): number {
+  if (!Number.isFinite(pitch)) {
+    return minPitch;
   }
+  return Math.max(minPitch, Math.min(maxPitch, pitch));
+}
 
-  if (!currentLockId || !currentLockFound) {
-    return bestCandidateId;
-  }
+export function forwardFromYawPitch(yaw: number, pitch: number): Vec3 {
+  const cosPitch = Math.cos(pitch);
+  return {
+    x: Math.sin(yaw) * cosPitch,
+    y: Math.sin(pitch),
+    z: Math.cos(yaw) * cosPitch,
+  };
+}
 
-  if (bestCandidateId === currentLockId) {
-    return currentLockId;
-  }
+export function rightFromYaw(yaw: number): Vec3 {
+  return {
+    x: -Math.cos(yaw),
+    y: 0,
+    z: Math.sin(yaw),
+  };
+}
 
-  if (currentLockDistanceSq > releaseDistanceSq) {
-    return bestCandidateId;
-  }
+export function computeCameraRigPosition(
+  pivot: Vec3,
+  yaw: number,
+  pitch: number,
+  followDistance: number,
+  shoulderOffset: number,
+  heightOffset: number,
+): Vec3 {
+  const forward = forwardFromYawPitch(yaw, pitch);
+  const right = rightFromYaw(yaw);
+  return {
+    x: pivot.x - forward.x * followDistance + right.x * shoulderOffset,
+    y: pivot.y - forward.y * followDistance + heightOffset,
+    z: pivot.z - forward.z * followDistance + right.z * shoulderOffset,
+  };
+}
 
-  if (bestCandidateDistanceSq < currentLockDistanceSq * switchRatio) {
-    return bestCandidateId;
-  }
-
-  return currentLockId;
+export function computeCameraFocusPoint(pivot: Vec3, yaw: number, pitch: number, focusDistance: number): Vec3 {
+  const forward = forwardFromYawPitch(yaw, pitch);
+  return {
+    x: pivot.x + forward.x * focusDistance,
+    y: pivot.y + forward.y * focusDistance,
+    z: pivot.z + forward.z * focusDistance,
+  };
 }
