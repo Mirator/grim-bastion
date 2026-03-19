@@ -275,3 +275,32 @@ Original prompt: Implement whole [grim_bastion_td_concept.md](grim_bastion_td_co
 - Re-verified:
   - `npm test` passed (13 files, 55 tests)
   - `npm run build` passed
+
+## 2026-03-19
+- Implemented collision hardening for core/towers across hero + all enemies:
+  - `NavigationGrid` now includes a static core blocker (`CORE_WORLD_POSITION`, `CORE_REACH_RADIUS`).
+  - Extended `CircleBlocker.source` with `"core"`.
+  - Added `getStructureCollisionBlockers()` returning tower + core blockers.
+  - Updated blocker composition:
+    - hero blockers: hero obstacles + structures,
+    - ground blockers: ground obstacles + structures.
+- Updated enemy runtime movement in `GameApp`:
+  - Flying enemies now resolve movement against structure blockers (tower + core), while still ignoring map obstacles.
+  - Ground enemies keep resolving against ground blockers (obstacles + towers + core).
+  - Core reach condition updated to account for entity radius plus small epsilon:
+    - `CORE_REACH_RADIUS + enemy.collisionRadius + 0.02`.
+- Expanded navigation tests:
+  - hero collision with obstacle/tower/core,
+  - core included in ground blockers,
+  - structure blockers exclude obstacles and include tower/core.
+- Verification:
+  - `npm test -- navigation-grid` passed (1 file, 5 tests).
+  - `npm test` passed (13 files, 56 tests).
+  - `npm run build` passed.
+  - Playwright smoke captures (screenshots + state JSON, no console/page error artifacts):
+    - `output/web-game-collision-core/`
+    - `output/web-game-collision-tower/`
+    - `output/web-game-collision-enemy/`
+- Note:
+  - The runtime smoke run captured ground enemies and structure interactions in wave 1.
+  - Wisp behavior (flying + obstacle passthrough with structure collision) is enforced by blocker-path tests in `tests/navigation-grid.test.ts`.

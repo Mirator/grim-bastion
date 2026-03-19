@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CORE_WORLD_POSITION } from "../src/game/constants";
+import { CORE_REACH_RADIUS, CORE_WORLD_POSITION } from "../src/game/constants";
 import { NavigationGrid } from "../src/game/systems/navigationGrid";
 import type { MapObstacle, TowerState, Vec3 } from "../src/game/types";
 
@@ -86,17 +86,51 @@ describe("navigation grid", () => {
     expect(blocks).toBe(true);
   });
 
-  it("resolves circle collisions for hero and ground blockers", () => {
+  it("resolves circle collisions for hero against obstacles, towers, and core", () => {
     const nav = new NavigationGrid();
     nav.setStaticObstacles([makeObstacle("hero-rock", 0, 0, 1.6)]);
     nav.setTowerBlockers([makeTower("tower-block", 3, 0)]);
 
-    const heroResolved = nav.resolvePositionAgainstBlockers(v3(0.2, 0), 0.45, nav.getHeroCollisionBlockers());
-    const heroDist = Math.hypot(heroResolved.x, heroResolved.z);
-    expect(heroDist).toBeGreaterThanOrEqual(2.04);
+    const heroObstacleResolved = nav.resolvePositionAgainstBlockers(v3(-0.2, 0), 0.45, nav.getHeroCollisionBlockers());
+    const heroObstacleDist = Math.hypot(heroObstacleResolved.x, heroObstacleResolved.z);
+    expect(heroObstacleDist).toBeGreaterThanOrEqual(2.04);
 
-    const groundResolved = nav.resolvePositionAgainstBlockers(v3(3, 0), 0.6, nav.getGroundCollisionBlockers());
-    const groundDistToTower = Math.hypot(groundResolved.x - 3, groundResolved.z);
-    expect(groundDistToTower).toBeGreaterThanOrEqual(1.44);
+    const heroTowerResolved = nav.resolvePositionAgainstBlockers(v3(3, 0), 0.45, nav.getHeroCollisionBlockers());
+    const heroTowerDist = Math.hypot(heroTowerResolved.x - 3, heroTowerResolved.z);
+    expect(heroTowerDist).toBeGreaterThanOrEqual(1.3);
+
+    const heroCoreResolved = nav.resolvePositionAgainstBlockers(
+      v3(CORE_WORLD_POSITION.x, CORE_WORLD_POSITION.z),
+      0.45,
+      nav.getHeroCollisionBlockers(),
+    );
+    const heroCoreDist = Math.hypot(heroCoreResolved.x - CORE_WORLD_POSITION.x, heroCoreResolved.z - CORE_WORLD_POSITION.z);
+    expect(heroCoreDist).toBeGreaterThanOrEqual(CORE_REACH_RADIUS + 0.45);
+  });
+
+  it("includes core in ground blockers and keeps structure blockers obstacle-free", () => {
+    const nav = new NavigationGrid();
+    nav.setStaticObstacles([makeObstacle("hero-rock", 0, 0, 1.6)]);
+    nav.setTowerBlockers([makeTower("tower-block", 3, 0)]);
+
+    const groundResolvedAtCore = nav.resolvePositionAgainstBlockers(
+      v3(CORE_WORLD_POSITION.x, CORE_WORLD_POSITION.z),
+      0.6,
+      nav.getGroundCollisionBlockers(),
+    );
+    const groundCoreDist = Math.hypot(
+      groundResolvedAtCore.x - CORE_WORLD_POSITION.x,
+      groundResolvedAtCore.z - CORE_WORLD_POSITION.z,
+    );
+    expect(groundCoreDist).toBeGreaterThanOrEqual(CORE_REACH_RADIUS + 0.6);
+
+    const structureBlockers = nav.getStructureCollisionBlockers();
+    expect(structureBlockers.some((blocker) => blocker.source === "obstacle")).toBe(false);
+    expect(structureBlockers.some((blocker) => blocker.source === "tower" && blocker.id === "tower-block")).toBe(true);
+    expect(structureBlockers.some((blocker) => blocker.source === "core")).toBe(true);
+
+    const structureResolvedAtObstacle = nav.resolvePositionAgainstBlockers(v3(0, 0), 0.6, structureBlockers);
+    expect(structureResolvedAtObstacle.x).toBeCloseTo(0, 5);
+    expect(structureResolvedAtObstacle.z).toBeCloseTo(0, 5);
   });
 });

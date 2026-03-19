@@ -90,6 +90,7 @@ const FINAL_STAND_MULTIPLIER = 1.22;
 const JUMP_DURATION = 0.42;
 const JUMP_PEAK_HEIGHT = 1.05;
 const DASH_MOTION_DURATION = 0.3;
+const CORE_CONTACT_EPSILON = 0.02;
 
 function createEmptyPlacementPreview(position: Vec3 = v3()): BuildPlacementPreview {
   return {
@@ -1225,6 +1226,7 @@ export class GameApp {
     const laneMap = new Map(biome.lanes.map((lane) => [lane.id, lane]));
     const livingWitches = this.state.enemies.filter((enemy) => !enemy.isDead && enemy.type === "witch");
     const groundBlockers = this.navigation.getGroundCollisionBlockers();
+    const structureBlockers = this.navigation.getStructureCollisionBlockers();
 
     for (const enemy of this.state.enemies) {
       if (enemy.isDead) {
@@ -1265,7 +1267,7 @@ export class GameApp {
       enemy.velocity = mul(direction, speed);
       const nextPosition = add(enemy.position, mul(enemy.velocity, dt));
       enemy.position = enemy.isFlying
-        ? nextPosition
+        ? this.navigation.resolvePositionAgainstBlockers(nextPosition, enemy.collisionRadius, structureBlockers)
         : this.navigation.resolvePositionAgainstBlockers(nextPosition, enemy.collisionRadius, groundBlockers);
 
       if (!enemy.isFlying) {
@@ -1277,7 +1279,7 @@ export class GameApp {
         enemy.pathProgress = Math.max(enemy.pathProgress, Math.max(0, enemy.spawnDistanceToCore - currentDistance));
       }
 
-      const reachedCore = distance2D(enemy.position, corePoint) <= CORE_REACH_RADIUS;
+      const reachedCore = distance2D(enemy.position, corePoint) <= CORE_REACH_RADIUS + enemy.collisionRadius + CORE_CONTACT_EPSILON;
       if (reachedCore) {
         this.hitCore(enemy.stats.contactDamage, enemy);
         enemy.isDead = true;

@@ -1,4 +1,14 @@
-import { ARENA_MAX_X, ARENA_MAX_Z, ARENA_MIN_X, ARENA_MIN_Z, NAV_AGENT_RADIUS, NAV_CELL_SIZE, TOWER_BLOCK_RADIUS } from "../constants";
+import {
+  ARENA_MAX_X,
+  ARENA_MAX_Z,
+  ARENA_MIN_X,
+  ARENA_MIN_Z,
+  CORE_REACH_RADIUS,
+  CORE_WORLD_POSITION,
+  NAV_AGENT_RADIUS,
+  NAV_CELL_SIZE,
+  TOWER_BLOCK_RADIUS,
+} from "../constants";
 import type { MapObstacle, TowerState, Vec3 } from "../types";
 
 export interface CircleBlocker {
@@ -6,7 +16,7 @@ export interface CircleBlocker {
   x: number;
   z: number;
   radius: number;
-  source: "obstacle" | "tower";
+  source: "obstacle" | "tower" | "core";
 }
 
 interface CellCoord {
@@ -57,6 +67,14 @@ export class NavigationGrid {
 
   private towerBlockers: CircleBlocker[] = [];
 
+  private readonly coreBlocker: CircleBlocker = {
+    id: "__core__",
+    x: CORE_WORLD_POSITION.x,
+    z: CORE_WORLD_POSITION.z,
+    radius: CORE_REACH_RADIUS,
+    source: "core",
+  };
+
   private blockedMask: Uint8Array = new Uint8Array(this.width * this.height);
 
   private distanceField: Float32Array = new Float32Array(this.width * this.height);
@@ -105,11 +123,15 @@ export class NavigationGrid {
   }
 
   getHeroCollisionBlockers(): CircleBlocker[] {
-    return this.obstacleHeroBlockers;
+    return [...this.obstacleHeroBlockers, ...this.getStructureCollisionBlockers()];
   }
 
   getGroundCollisionBlockers(): CircleBlocker[] {
-    return [...this.obstacleGroundBlockers, ...this.towerBlockers];
+    return [...this.obstacleGroundBlockers, ...this.getStructureCollisionBlockers()];
+  }
+
+  getStructureCollisionBlockers(): CircleBlocker[] {
+    return [...this.towerBlockers, this.coreBlocker];
   }
 
   resolvePositionAgainstBlockers(position: Vec3, radius: number, blockers: CircleBlocker[]): Vec3 {
