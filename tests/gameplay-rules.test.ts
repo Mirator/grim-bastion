@@ -13,21 +13,23 @@ import {
 } from "../src/game/systems/gameplayRules";
 
 describe("gameplay rules", () => {
-  it("allows combat view toggle only when a wave is active", () => {
-    expect(canToggleCombatView("build", true)).toBe(true);
-    expect(canToggleCombatView("wave", true)).toBe(true);
-    expect(canToggleCombatView("menu", true)).toBe(false);
-    expect(canToggleCombatView("build", false)).toBe(false);
+  it("allows combat view toggle only in run view states", () => {
+    expect(canToggleCombatView("build")).toBe(true);
+    expect(canToggleCombatView("wave")).toBe(true);
+    expect(canToggleCombatView("between-biomes")).toBe(true);
+    expect(canToggleCombatView("menu")).toBe(false);
+    expect(canToggleCombatView("upgrade")).toBe(false);
   });
 
   it("keeps mode unchanged when toggle is invalid", () => {
-    expect(nextCombatViewMode("menu", false)).toBe("menu");
-    expect(nextCombatViewMode("upgrade", true)).toBe("upgrade");
+    expect(nextCombatViewMode("menu")).toBe("menu");
+    expect(nextCombatViewMode("upgrade")).toBe("upgrade");
   });
 
-  it("swaps between build and wave views during active wave", () => {
-    expect(nextCombatViewMode("build", true)).toBe("wave");
-    expect(nextCombatViewMode("wave", true)).toBe("build");
+  it("swaps between build and wave, and sends between-biomes to build", () => {
+    expect(nextCombatViewMode("build")).toBe("wave");
+    expect(nextCombatViewMode("wave")).toBe("build");
+    expect(nextCombatViewMode("between-biomes")).toBe("build");
   });
 
   it("awards rewards only for killed enemies", () => {
@@ -70,6 +72,7 @@ describe("gameplay rules", () => {
     expect(resolveDigitHotkeyAction("upgrade", 1, 8)).toEqual({ upgradeIndex: 1, buildIndex: null });
     expect(resolveDigitHotkeyAction("upgrade", 5, 8)).toEqual({ upgradeIndex: null, buildIndex: null });
     expect(resolveDigitHotkeyAction("build", 5, 8)).toEqual({ upgradeIndex: null, buildIndex: 5 });
+    expect(resolveDigitHotkeyAction("wave", 2, 8)).toEqual({ upgradeIndex: null, buildIndex: null });
   });
 
   it("builds a smooth jump arc with zero at start and landing", () => {

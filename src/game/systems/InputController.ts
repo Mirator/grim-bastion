@@ -56,6 +56,13 @@ export function isJumpKeyCode(code: string): boolean {
   return code === "Space";
 }
 
+export function buildCycleDirectionFromWheelDelta(deltaY: number): 1 | -1 | 0 {
+  if (!Number.isFinite(deltaY) || deltaY === 0) {
+    return 0;
+  }
+  return deltaY > 0 ? 1 : -1;
+}
+
 export class InputController {
   private keysDown = new Set<string>();
 
@@ -78,6 +85,7 @@ export class InputController {
     window.addEventListener("mousedown", this.onMouseDown);
     window.addEventListener("mouseup", this.onMouseUp);
     window.addEventListener("mousemove", this.onMouseMove);
+    window.addEventListener("wheel", this.onWheel, { passive: false });
     document.addEventListener("pointerlockchange", this.onPointerLockChange);
     window.addEventListener("blur", this.onBlur);
     if (this.target instanceof HTMLElement) {
@@ -92,6 +100,7 @@ export class InputController {
     window.removeEventListener("mousedown", this.onMouseDown);
     window.removeEventListener("mouseup", this.onMouseUp);
     window.removeEventListener("mousemove", this.onMouseMove);
+    window.removeEventListener("wheel", this.onWheel);
     document.removeEventListener("pointerlockchange", this.onPointerLockChange);
     window.removeEventListener("blur", this.onBlur);
     if (this.target instanceof HTMLElement) {
@@ -242,6 +251,19 @@ export class InputController {
     }
     this.pointer.x = event.clientX;
     this.pointer.y = event.clientY;
+  };
+
+  private onWheel = (event: WheelEvent): void => {
+    const direction = buildCycleDirectionFromWheelDelta(event.deltaY);
+    if (direction === 0) {
+      return;
+    }
+    if (direction > 0) {
+      this.transient.cycleBuildNext = true;
+    } else {
+      this.transient.cycleBuildPrev = true;
+    }
+    event.preventDefault();
   };
 
   private onPointerLockChange = (): void => {

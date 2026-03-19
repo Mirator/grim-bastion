@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { digitHotkeyFromCode, isDashKeyCode, isJumpKeyCode } from "../src/game/systems/InputController";
+import {
+  buildCycleDirectionFromWheelDelta,
+  digitHotkeyFromCode,
+  isDashKeyCode,
+  isJumpKeyCode,
+} from "../src/game/systems/InputController";
 
 describe("input controller hotkey mapping", () => {
   it("maps Digit1..Digit8 to zero-based build/upgrade slots", () => {
@@ -19,5 +24,11 @@ describe("input controller hotkey mapping", () => {
     expect(isDashKeyCode("ShiftLeft")).toBe(true);
     expect(isDashKeyCode("ShiftRight")).toBe(true);
     expect(isDashKeyCode("Space")).toBe(false);
+  });
+
+  it("maps mouse wheel direction to build cycling", () => {
+    expect(buildCycleDirectionFromWheelDelta(10)).toBe(1);
+    expect(buildCycleDirectionFromWheelDelta(-10)).toBe(-1);
+    expect(buildCycleDirectionFromWheelDelta(0)).toBe(0);
   });
 });

@@ -8,7 +8,7 @@ import {
   CORE_WORLD_POSITION,
 } from "../constants";
 import { biomeSequence } from "../data/biomes";
-import type { MutableGameState, Vec3 } from "../types";
+import type { MutableGameState, TowerType, TrapType, Vec3 } from "../types";
 import {
   clampCameraPitch,
   computeCameraFocusPoint,
@@ -147,6 +147,10 @@ export class Renderer3D {
 
   private placementPreviewMesh: THREE.Mesh;
 
+  private buildGhostMesh: THREE.Mesh;
+
+  private activeBuildGhostType: TowerType | TrapType | null = null;
+
   private coreBuildBufferMesh: THREE.Mesh;
 
   private reticleTarget = new THREE.Vector3();
@@ -224,6 +228,21 @@ export class Renderer3D {
     this.placementPreviewMesh.visible = false;
     this.scene.add(this.placementPreviewMesh);
 
+    this.buildGhostMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({
+        color: "#65f2a6",
+        emissive: "#3a7f67",
+        emissiveIntensity: 0.45,
+        transparent: true,
+        opacity: 0.42,
+        roughness: 0.35,
+        metalness: 0.05,
+      }),
+    );
+    this.buildGhostMesh.visible = false;
+    this.scene.add(this.buildGhostMesh);
+
     this.coreBuildBufferMesh = new THREE.Mesh(
       new THREE.RingGeometry(CORE_BUILD_BUFFER_RADIUS - 0.1, CORE_BUILD_BUFFER_RADIUS, 64),
       new THREE.MeshBasicMaterial({ color: "#82c6f3", transparent: true, opacity: 0.35, side: THREE.DoubleSide }),
@@ -255,6 +274,8 @@ export class Renderer3D {
     this.obstacleMeshes.clear();
     this.placementPreviewMesh.geometry.dispose();
     (this.placementPreviewMesh.material as THREE.Material).dispose();
+    this.buildGhostMesh.geometry.dispose();
+    (this.buildGhostMesh.material as THREE.Material).dispose();
     this.coreBuildBufferMesh.geometry.dispose();
     (this.coreBuildBufferMesh.material as THREE.Material).dispose();
     this.renderer.dispose();
@@ -779,11 +800,13 @@ export class Renderer3D {
   private syncPlacementPreview(state: MutableGameState): void {
     const buildMode = state.mode === "build";
     this.placementPreviewMesh.visible = buildMode;
+    this.buildGhostMesh.visible = buildMode;
     this.coreBuildBufferMesh.visible = buildMode;
     if (!buildMode) {
       return;
     }
 
+    this.syncBuildGhost(state.selectedBuildType, state.placementPreview.canPlace, state.placementPreview.position);
     this.placementPreviewMesh.position.set(state.placementPreview.position.x, 0.045, state.placementPreview.position.z);
     const material = this.placementPreviewMesh.material as THREE.MeshBasicMaterial;
     if (state.placementPreview.canPlace) {
@@ -798,6 +821,65 @@ export class Renderer3D {
     }
     material.color.set("#ff8f84");
     material.opacity = 0.8;
+  }
+
+  private syncBuildGhost(selectedBuildType: TowerType | TrapType, canPlace: boolean, position: Vec3): void {
+    if (this.activeBuildGhostType !== selectedBuildType) {
+      this.buildGhostMesh.geometry.dispose();
+      this.buildGhostMesh.geometry = this.geometryForBuildType(selectedBuildType);
+      this.activeBuildGhostType = selectedBuildType;
+    }
+
+    this.buildGhostMesh.position.set(position.x, this.previewHeightForBuildType(selectedBuildType), position.z);
+    this.buildGhostMesh.rotation.set(0, 0, 0);
+
+    const material = this.buildGhostMesh.material as THREE.MeshStandardMaterial;
+    material.color.set(canPlace ? "#65f2a6" : "#ff8f84");
+    material.emissive.set(canPlace ? "#3a7f67" : "#8f4a40");
+    material.opacity = canPlace ? 0.42 : 0.46;
+  }
+
+  private previewHeightForBuildType(type: TowerType | TrapType): number {
+    switch (type) {
+      case "spike-trap":
+        return 0.4;
+      case "push-trap":
+      case "flame-trap":
+        return 0.2;
+      case "frost-obelisk":
+        return 0.9;
+      case "bombard":
+        return 0.6;
+      case "arc-tower":
+        return 0.78;
+      case "shrine":
+        return 0.8;
+      case "ballista":
+      default:
+        return 0.7;
+    }
+  }
+
+  private geometryForBuildType(type: TowerType | TrapType): THREE.BufferGeometry {
+    switch (type) {
+      case "ballista":
+        return new THREE.BoxGeometry(1.1, 1.1, 1.1);
+      case "frost-obelisk":
+        return new THREE.ConeGeometry(0.5, 1.8, 5);
+      case "bombard":
+        return new THREE.CylinderGeometry(0.7, 0.85, 1.2, 8);
+      case "arc-tower":
+        return new THREE.OctahedronGeometry(0.75, 0);
+      case "shrine":
+        return new THREE.TorusKnotGeometry(0.6, 0.18, 64, 10);
+      case "spike-trap":
+        return new THREE.ConeGeometry(0.35, 0.8, 4);
+      case "push-trap":
+        return new THREE.BoxGeometry(0.8, 0.2, 0.8);
+      case "flame-trap":
+      default:
+        return new THREE.CylinderGeometry(0.45, 0.55, 0.25, 8);
+    }
   }
 
   private syncHazards(state: MutableGameState): void {

@@ -1,6 +1,7 @@
 import { biomeSequence } from "../data/biomes";
 import { towerArchetypes, trapArchetypes } from "../data/archetypes";
 import { CORE_BUILD_BUFFER_RADIUS, CORE_WORLD_POSITION } from "../constants";
+import { BUILD_HOTKEY_ORDER } from "../systems/gameplayRules";
 import type { MutableGameState, TowerType, TrapType, UpgradeDefinition, Vec3 } from "../types";
 
 export interface HudEvents {
@@ -52,6 +53,8 @@ export class HudUI {
 
   private readonly buildListEl: HTMLElement;
 
+  private readonly buildActionBarEl: HTMLElement;
+
   private readonly upgradePanelEl: HTMLElement;
 
   private readonly upgradeCardsEl: HTMLElement;
@@ -76,8 +79,9 @@ export class HudUI {
           <h3>Controls</h3>
           <p>Mouse look (locked), center crosshair aim, LMB fire, Q/E abilities, Shift dash, Space jump.</p>
           <p>Build mode: LMB place selected defense at reticle, RMB sell nearest defense.</p>
-          <p>B toggle build, N start wave, 1/2/3 choose upgrades.</p>
-          <p>1-8 select build, [ / ] cycle build, R weapon, L loadout, F fullscreen.</p>
+          <p>B starts run from menu and toggles build/combat view in-run. N starts wave, 1/2/3 choose upgrades.</p>
+          <p>Build action bar: 1-8 select slot, mouse wheel or [ / ] cycle slot.</p>
+          <p>R weapon, L loadout, F fullscreen.</p>
         </div>
         <div class="hud-panel actions">
           <button id="start-run">Start Run (Enter)</button>
@@ -87,15 +91,14 @@ export class HudUI {
         </div>
       </div>
       <div class="hud-bottom">
-        <div class="hud-panel build-menu">
-          <h3>Build Menu</h3>
-          <div id="build-list"></div>
-        </div>
         <div class="hud-panel minimap-panel">
           <h3>Minimap</h3>
           <canvas id="minimap" width="220" height="160"></canvas>
         </div>
         <div class="hud-panel tips" id="tips"></div>
+      </div>
+      <div class="build-action-bar hidden" id="build-action-bar">
+        <div id="build-list" class="build-list-horizontal"></div>
       </div>
       <div class="overlay-upgrade hidden" id="upgrade-panel">
         <h2>Choose 1 Upgrade</h2>
@@ -108,6 +111,7 @@ export class HudUI {
     this.heroEl = this.query("#hero");
     this.modeEl = this.query("#mode");
     this.tipsEl = this.query("#tips");
+    this.buildActionBarEl = this.query("#build-action-bar");
     this.buildListEl = this.query("#build-list");
     this.upgradePanelEl = this.query("#upgrade-panel");
     this.upgradeCardsEl = this.query("#upgrade-cards");
@@ -178,19 +182,40 @@ export class HudUI {
 
     this.renderUpgradePanel(state);
     this.renderMinimap(state);
+    this.buildActionBarEl.classList.toggle("hidden", state.mode !== "build");
     this.updateBuildSelection(state.selectedBuildType);
   }
 
   private renderBuildButtons(): void {
-    const entries: Array<{ id: TowerType | TrapType; label: string; cost: number }> = [
-      ...Object.values(towerArchetypes).map((tower) => ({ id: tower.type, label: tower.label, cost: tower.baseCost })),
-      ...Object.values(trapArchetypes).map((trap) => ({ id: trap.type, label: trap.label, cost: trap.baseCost })),
-    ];
+    const entries: Array<{ id: TowerType | TrapType; label: string; cost: number; hotkey: number }> = BUILD_HOTKEY_ORDER.map(
+      (type, index) => {
+        if (type in towerArchetypes) {
+          const tower = towerArchetypes[type as TowerType];
+          return {
+            id: tower.type,
+            label: tower.label,
+            cost: tower.baseCost,
+            hotkey: index + 1,
+          };
+        }
+        const trap = trapArchetypes[type as TrapType];
+        return {
+          id: trap.type,
+          label: trap.label,
+          cost: trap.baseCost,
+          hotkey: index + 1,
+        };
+      },
+    );
 
     this.buildListEl.innerHTML = entries
       .map(
         (entry) =>
-          `<button class="build-item" data-build="${entry.id}">${entry.label}<span>(${entry.cost}g)</span></button>`,
+          `<button class="build-item action-slot" data-build="${entry.id}">
+            <span class="build-slot-hotkey">${entry.hotkey}</span>
+            <span class="build-slot-name">${entry.label}</span>
+            <span class="build-slot-cost">${entry.cost}g</span>
+          </button>`,
       )
       .join("");
 

@@ -1,4 +1,4 @@
-import type { EnemyLifecycleOutcome, GameMode } from "../types";
+import type { EnemyLifecycleOutcome, GameMode, TowerType, TrapType } from "../types";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -15,16 +15,27 @@ export function computeJumpArcHeight(progress: number, peakHeight: number): numb
   return Math.sin(Math.PI * clampedProgress) * peakHeight;
 }
 
-export function canToggleCombatView(mode: GameMode, waveActive: boolean): boolean {
-  if (!waveActive) {
-    return false;
-  }
-  return mode === "build" || mode === "wave";
+export const BUILD_HOTKEY_ORDER: Array<TowerType | TrapType> = [
+  "ballista",
+  "frost-obelisk",
+  "bombard",
+  "arc-tower",
+  "shrine",
+  "spike-trap",
+  "push-trap",
+  "flame-trap",
+];
+
+export function canToggleCombatView(mode: GameMode): boolean {
+  return mode === "build" || mode === "wave" || mode === "between-biomes";
 }
 
-export function nextCombatViewMode(mode: GameMode, waveActive: boolean): GameMode {
-  if (!canToggleCombatView(mode, waveActive)) {
+export function nextCombatViewMode(mode: GameMode): GameMode {
+  if (!canToggleCombatView(mode)) {
     return mode;
+  }
+  if (mode === "between-biomes") {
+    return "build";
   }
   return mode === "build" ? "wave" : "build";
 }
@@ -81,6 +92,12 @@ export function resolveDigitHotkeyAction(mode: GameMode, digitHotkey: number | n
   if (mode === "upgrade") {
     return {
       upgradeIndex: digitHotkey < 3 ? digitHotkey : null,
+      buildIndex: null,
+    };
+  }
+  if (mode !== "build") {
+    return {
+      upgradeIndex: null,
       buildIndex: null,
     };
   }

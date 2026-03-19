@@ -32,6 +32,7 @@ import {
   validatePlacement,
 } from "./systems/buildPlacement";
 import {
+  BUILD_HOTKEY_ORDER,
   canToggleCombatView,
   computeJumpArcHeight,
   computeEnemyMoveSpeed,
@@ -89,16 +90,6 @@ const FINAL_STAND_MULTIPLIER = 1.22;
 const JUMP_DURATION = 0.42;
 const JUMP_PEAK_HEIGHT = 1.05;
 const DASH_MOTION_DURATION = 0.3;
-const BUILD_HOTKEY_ORDER: Array<TowerType | TrapType> = [
-  "ballista",
-  "frost-obelisk",
-  "bombard",
-  "arc-tower",
-  "shrine",
-  "spike-trap",
-  "push-trap",
-  "flame-trap",
-];
 
 function createEmptyPlacementPreview(position: Vec3 = v3()): BuildPlacementPreview {
   return {
@@ -204,8 +195,16 @@ export class GameApp {
     this.hud = new HudUI(hudRoot, {
       onStartRun: () => this.startRun(),
       onStartWave: () => this.startWave(),
-      onToggleBuild: () => this.requestCombatViewToggle(),
+      onToggleBuild: () => {
+        if (!canToggleCombatView(this.state.mode)) {
+          return;
+        }
+        this.requestCombatViewToggle();
+      },
       onSelectBuild: (type) => {
+        if (this.state.mode !== "build") {
+          return;
+        }
         this.state.selectedBuildType = type;
       },
       onPickUpgrade: (index) => this.pickUpgrade(index),
@@ -451,14 +450,14 @@ export class GameApp {
       this.state.mode = "build";
     }
 
-    if (this.state.mode === "build") {
+    if (this.state.mode === "build" || this.state.mode === "wave") {
       this.waveDirector.startCurrentWave(this.state);
       this.audio.play("wave-start", 1.1);
     }
   }
 
   private requestCombatViewToggle(): void {
-    this.state.mode = nextCombatViewMode(this.state.mode, this.state.wave.active);
+    this.state.mode = nextCombatViewMode(this.state.mode);
   }
 
   private handleGlobalInput(input: InputState): void {
@@ -474,8 +473,12 @@ export class GameApp {
       this.startWave();
     }
 
-    if (input.toggleBuild && canToggleCombatView(this.state.mode, this.state.wave.active)) {
-      this.requestCombatViewToggle();
+    if (input.toggleBuild) {
+      if (this.state.mode === "menu" || this.state.mode === "game-over" || this.state.mode === "victory") {
+        this.startRun();
+      } else if (canToggleCombatView(this.state.mode)) {
+        this.requestCombatViewToggle();
+      }
     }
 
     if (input.cycleWeapon) {
@@ -486,11 +489,11 @@ export class GameApp {
       this.switchLoadout();
     }
 
-    if (input.cycleBuildNext) {
+    if (this.state.mode === "build" && input.cycleBuildNext) {
       this.cycleBuildSelection(1);
     }
 
-    if (input.cycleBuildPrev) {
+    if (this.state.mode === "build" && input.cycleBuildPrev) {
       this.cycleBuildSelection(-1);
     }
 

@@ -233,3 +233,45 @@ Original prompt: Implement whole [grim_bastion_td_concept.md](grim_bastion_td_co
 - TODO / follow-up tuning:
   - Fine-tune obstacle radii/positions after gameplay feel pass (especially Ruined Gate opening pressure).
   - Consider exposing an explicit `blocks-path` placement scenario in automated UI choreography for visual regression checks.
+
+## 2026-03-19
+- Reworked build interaction into a build-only bottom action bar and mode-specific controls:
+  - Build menu removed from always-visible HUD panel and replaced with compact horizontal `#build-action-bar` at screen bottom.
+  - Action bar now renders all 8 buildables in explicit hotkey order (`1..8`) with hotkey chip, label, and cost.
+  - Action bar visibility is now gated to `state.mode === "build"` only.
+- Updated mode/input rules:
+  - `B` mode matrix implemented: `build -> wave`, `wave -> build`, `between-biomes -> build`; no-op for menu/upgrade/game-over/victory.
+  - `N` wave start now works from both `build` and `wave` (when no active wave), so view toggling does not block wave start.
+  - Build selection hotkeys are now build-mode only (digit build selection disabled in non-build non-upgrade modes; upgrade digits preserved).
+  - Added mouse-wheel build cycling support (`wheel down -> next`, `wheel up -> previous`) with cleanup of wheel listener in `InputController.dispose()`.
+  - Existing `[`/`]` cycling retained and now gated to build mode.
+- Added build ghost preview in renderer:
+  - New tinted semi-transparent 3D ghost mesh follows placement cursor in build mode.
+  - Ghost geometry matches selected build type and updates when selection changes.
+  - Ghost tint tracks validity (`green` valid / `red` invalid) and hides outside build mode.
+  - Existing placement ring and core buffer ring retained as supplemental placement feedback.
+- Tests updated:
+  - `tests/gameplay-rules.test.ts` updated for new mode-toggle matrix and build hotkey gating by mode.
+  - `tests/input-controller-mapping.test.ts` extended with wheel-direction mapping checks.
+- Verification:
+  - `npm test` passed (13 files, 55 tests).
+  - `npm run build` passed.
+  - Playwright client run completed with artifacts in `output/web-game-build-action-bar/`.
+  - Direct Playwright interaction probe completed with artifacts in `output/web-game-build-action-bar-manual/` and confirmed:
+    - digit select (`Digit2`) -> `frost-obelisk`,
+    - wheel-down cycle -> `bombard`,
+    - click selection -> `flame-trap`,
+    - `B` toggles to `wave` (action bar hidden) and back to `build` (action bar visible).
+- 2026-03-19 follow-up fix:
+  - Updated `B` handling in `GameApp.handleGlobalInput` so pressing `B` from `menu`/`game-over`/`victory` now starts a run immediately (enters build mode), instead of being ignored.
+  - Updated HUD controls hint text to reflect that `B` starts run from menu.
+- Re-verified:
+  - `npm test` passed (13 files, 55 tests),
+  - `npm run build` passed,
+  - direct Playwright probe confirmed `KeyB` from menu yields `mode: "build"` and visible action bar.
+- 2026-03-19 preview orientation tweak:
+  - Build ghost preview no longer rotates over time.
+  - Preview orientation is now fixed to match placed default orientation (`rotation.set(0,0,0)` each sync).
+- Re-verified:
+  - `npm test` passed (13 files, 55 tests)
+  - `npm run build` passed
