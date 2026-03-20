@@ -43,17 +43,20 @@ import {
   shouldTriggerLaneEcho,
   shouldAwardEnemyRewards,
 } from "./systems/gameplayRules";
+import { orderedWaveLanes } from "./systems/enemyRoutePreview";
 import { buildReticleFrameData, type ReticleFrameData } from "./systems/reticleFrame";
 import { loadSave, patchSave } from "./systems/SaveSystem";
 import { StatusSystem } from "./systems/StatusSystem";
 import { UpgradeSystem } from "./systems/UpgradeSystem";
-import { WaveDirector } from "./systems/WaveDirector";
+import { WaveDirector, currentWaveTemplate } from "./systems/WaveDirector";
 import { NavigationGrid } from "./systems/navigationGrid";
 import type {
   AbilityType,
   BuildPlacementPreview,
+  EnemyRoutePreview,
   EnemyState,
   EnemyType,
+  LaneDefinition,
   MutableGameState,
   ProjectileState,
   RenderTextSnapshot,
@@ -172,6 +175,10 @@ export class GameApp {
 
   private navigationTowersDirty = true;
 
+  private enemyRoutePreviewDirty = true;
+
+  private enemyRoutePreviewWaveKey = "";
+
   constructor(canvas: HTMLCanvasElement, hudRoot: HTMLElement, renderer: Renderer3D, physics: PhysicsHandles) {
     this.canvas = canvas;
     this.renderer = renderer;
@@ -214,6 +221,7 @@ export class GameApp {
 
     this.exposeAutomationHooks();
     this.updateReticleFrame(FIXED_DT);
+    this.ensureEnemyRoutePreview();
     this.hud.update(this.state);
     this.renderer.render(this.state, FIXED_DT);
   }
@@ -244,6 +252,64 @@ export class GameApp {
 
   private markNavigationDirty(): void {
     this.navigationTowersDirty = true;
+    this.markEnemyRoutePreviewDirty();
+  }
+
+  private markEnemyRoutePreviewDirty(): void {
+    this.enemyRoutePreviewDirty = true;
+  }
+
+  private enemyRouteWaveKey(): string {
+    return `${this.state.currentBiomeIndex}:${this.state.wave.waveIndexInBiome}:${this.state.wave.globalWaveNumber}`;
+  }
+
+  private currentWaveLanes(): LaneDefinition[] {
+    const biome = this.currentBiome();
+    const template = currentWaveTemplate(this.state);
+    return orderedWaveLanes(biome, template);
+  }
+
+  private doesRouteReachCore(points: Vec3[]): boolean {
+    if (points.length === 0) {
+      return false;
+    }
+    const last = points[points.length - 1]!;
+    return distance2D(last, CORE_WORLD_POSITION) <= CORE_REACH_RADIUS + 1.5;
+  }
+
+  private fallbackLaneRoute(lane: LaneDefinition): Vec3[] {
+    return lane.points.map((point) => copyVec3(point));
+  }
+
+  private ensureEnemyRoutePreview(): void {
+    const waveKey = this.enemyRouteWaveKey();
+    if (waveKey !== this.enemyRoutePreviewWaveKey) {
+      this.enemyRoutePreviewWaveKey = waveKey;
+      this.markEnemyRoutePreviewDirty();
+    }
+
+    if (!this.enemyRoutePreviewDirty) {
+      return;
+    }
+
+    this.ensureNavigationState();
+    const routes: EnemyRoutePreview[] = [];
+    for (const lane of this.currentWaveLanes()) {
+      const spawn = lane.points[0];
+      if (!spawn) {
+        continue;
+      }
+
+      const traced = this.navigation.tracePathToCore(spawn, CORE_WORLD_POSITION, { maxSteps: 320 });
+      const pathPoints = traced.length >= 2 && this.doesRouteReachCore(traced) ? traced : this.fallbackLaneRoute(lane);
+      routes.push({
+        laneId: lane.id,
+        points: pathPoints.map((point) => copyVec3(point)),
+      });
+    }
+
+    this.state.enemyRoutePreview = routes;
+    this.enemyRoutePreviewDirty = false;
   }
 
   private currentGroundSpawnPoints(): Vec3[] {
@@ -259,6 +325,7 @@ export class GameApp {
       this.navigation.setStaticObstacles(this.currentBiome().obstacles);
       this.navigationBiomeIndex = this.state.currentBiomeIndex;
       this.navigationTowersDirty = true;
+      this.markEnemyRoutePreviewDirty();
     }
 
     if (this.navigationTowersDirty) {
@@ -360,6 +427,7 @@ export class GameApp {
       selectedBuildType: "ballista",
       selectedTargetId: null,
       currentBiomeIndex: 0,
+      enemyRoutePreview: [],
       wave: {
         active: false,
         biomeIndex: 0,
@@ -418,8 +486,11 @@ export class GameApp {
     this.pendingDashTrailPulse = false;
     this.navigationBiomeIndex = -1;
     this.navigationTowersDirty = true;
+    this.enemyRoutePreviewDirty = true;
+    this.enemyRoutePreviewWaveKey = "";
     this.renderer.initializeCameraRig(this.state.hero.position, this.state.hero.facing);
     this.updateReticleFrame(FIXED_DT);
+    this.ensureEnemyRoutePreview();
     this.syncHeroPhysics();
     this.hud.update(this.state);
   }
@@ -453,6 +524,7 @@ export class GameApp {
 
     if (this.state.mode === "build" || this.state.mode === "wave") {
       this.waveDirector.startCurrentWave(this.state);
+      this.markEnemyRoutePreviewDirty();
       this.audio.play("wave-start", 1.1);
     }
   }
@@ -517,6 +589,7 @@ export class GameApp {
   private update(dt: number, input: InputState): void {
     this.state.time += dt;
     this.ensureNavigationState();
+    this.ensureEnemyRoutePreview();
     this.updateReticleFrame(dt);
     this.updateHero(dt, input);
     this.updateHeroAbilities(dt, input);
@@ -1680,6 +1753,7 @@ export class GameApp {
     this.state.resources.essence += 5;
     this.upgradeSystem.rollChoices(this.state, 3);
     this.state.mode = "upgrade";
+    this.markEnemyRoutePreviewDirty();
   }
 
   private handleBiomeCleared(): void {
@@ -1687,6 +1761,7 @@ export class GameApp {
     this.state.resources.essence += 15;
     this.state.hero.stats.health = Math.min(this.state.hero.stats.maxHealth, this.state.hero.stats.health + 60);
     this.state.mode = "between-biomes";
+    this.markEnemyRoutePreviewDirty();
   }
 
   private handleRunCompleted(): void {
@@ -1857,6 +1932,7 @@ export class GameApp {
       activeZoneTimer: 0,
     };
     this.state.traps.push(trap);
+    this.markEnemyRoutePreviewDirty();
     this.state.placementPreview = this.computePlacementPreview(placementPoint);
   }
 
@@ -1899,6 +1975,7 @@ export class GameApp {
       }
       this.state.resources.gold += Math.round(refund);
       this.state.traps.splice(trapIndex, 1);
+      this.markEnemyRoutePreviewDirty();
       this.state.placementPreview = this.computePlacementPreview(placementPoint);
     }
   }
@@ -2048,6 +2125,10 @@ export class GameApp {
               }
             : null,
         },
+        enemyRoutePreview: this.state.enemyRoutePreview.map((lanePath) => ({
+          laneId: lanePath.laneId,
+          points: lanePath.points.map((point) => copyVec3(point)),
+        })),
         camera: {
           position: camera.position,
           focus: camera.focus,

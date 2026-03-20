@@ -70,6 +70,39 @@ describe("navigation grid", () => {
     expect(Math.abs(rerouted!.z)).toBeGreaterThan(0.01);
   });
 
+  it("traces a route to core and reroutes when blockers change", () => {
+    const nav = new NavigationGrid();
+    const start = v3(-12, 0);
+    nav.setStaticObstacles([]);
+    nav.setTowerBlockers([]);
+
+    const baselinePath = nav.tracePathToCore(start, CORE_WORLD_POSITION, { maxSteps: 220 });
+    expect(baselinePath.length).toBeGreaterThan(2);
+    const baselineEnd = baselinePath[baselinePath.length - 1]!;
+    expect(distanceToCore(baselineEnd)).toBeLessThanOrEqual(CORE_REACH_RADIUS + 1.5);
+    const baselineMaxAbsZ = Math.max(...baselinePath.map((point) => Math.abs(point.z)));
+    expect(baselineMaxAbsZ).toBeLessThan(0.8);
+
+    nav.setTowerBlockers([makeTower("tower-block", -8, 0)]);
+    const reroutedPath = nav.tracePathToCore(start, CORE_WORLD_POSITION, { maxSteps: 220 });
+    expect(reroutedPath.length).toBeGreaterThan(2);
+    const reroutedEnd = reroutedPath[reroutedPath.length - 1]!;
+    expect(distanceToCore(reroutedEnd)).toBeLessThanOrEqual(CORE_REACH_RADIUS + 1.5);
+    const reroutedMaxAbsZ = Math.max(...reroutedPath.map((point) => Math.abs(point.z)));
+    expect(reroutedMaxAbsZ).toBeGreaterThan(0.8);
+  });
+
+  it("caps path tracing safely when no route exists", () => {
+    const nav = new NavigationGrid();
+    nav.setStaticObstacles([makeObstacle("seal-core", CORE_WORLD_POSITION.x, CORE_WORLD_POSITION.z, 3.5)]);
+    nav.setTowerBlockers([]);
+
+    const blockedPath = nav.tracePathToCore(v3(-12, 0), CORE_WORLD_POSITION, { maxSteps: 12 });
+    expect(blockedPath.length).toBe(1);
+    expect(blockedPath[0]?.x).toBeCloseTo(-12, 5);
+    expect(blockedPath[0]?.z).toBeCloseTo(0, 5);
+  });
+
   it("detects tower placements that would block all spawn routes", () => {
     const nav = new NavigationGrid();
     const obstacles: MapObstacle[] = [];
@@ -134,3 +167,7 @@ describe("navigation grid", () => {
     expect(structureResolvedAtObstacle.z).toBeCloseTo(0, 5);
   });
 });
+
+function distanceToCore(position: Vec3): number {
+  return Math.hypot(position.x - CORE_WORLD_POSITION.x, position.z - CORE_WORLD_POSITION.z);
+}

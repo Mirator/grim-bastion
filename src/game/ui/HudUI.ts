@@ -282,11 +282,17 @@ export class HudUI {
       y: oy + position.z * mapScale,
     });
 
-    ctx.strokeStyle = "rgba(140, 175, 210, 0.25)";
-    ctx.lineWidth = 1;
-    for (const biomeLane of biome.lanes) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(156, 214, 255, 0.72)";
+    ctx.lineWidth = 1.4;
+    ctx.setLineDash([5, 3]);
+    ctx.lineDashOffset = -state.time * 26;
+    state.enemyRoutePreview.forEach((laneRoute) => {
+      if (laneRoute.points.length === 0) {
+        return;
+      }
       ctx.beginPath();
-      biomeLane.points.forEach((lanePoint, index) => {
+      laneRoute.points.forEach((lanePoint, index) => {
         const p = project(lanePoint);
         if (index === 0) {
           ctx.moveTo(p.x, p.y);
@@ -295,7 +301,8 @@ export class HudUI {
         }
       });
       ctx.stroke();
-    }
+    });
+    ctx.restore();
 
     ctx.fillStyle = "rgba(122, 142, 156, 0.62)";
     for (const obstacle of biome.obstacles) {

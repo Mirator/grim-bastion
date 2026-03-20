@@ -54,6 +54,7 @@ export function makeTestState(): MutableGameState {
     selectedBuildType: "ballista",
     selectedTargetId: null,
     currentBiomeIndex: 0,
+    enemyRoutePreview: [],
     wave: {
       active: false,
       biomeIndex: 0,

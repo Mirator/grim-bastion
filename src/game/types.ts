@@ -230,6 +230,11 @@ export interface LaneDefinition {
   flyingPoints: Vec3[];
 }
 
+export interface EnemyRoutePreview {
+  laneId: string;
+  points: Vec3[];
+}
+
 export interface HazardZone {
   id: string;
   type: "slow-field" | "damage-pool" | "frost-field";
@@ -383,6 +388,7 @@ export interface MutableGameState {
   selectedBuildType: TowerType | TrapType;
   selectedTargetId: string | null;
   currentBiomeIndex: number;
+  enemyRoutePreview: EnemyRoutePreview[];
   wave: WaveRuntimeState;
   availableUpgrades: UpgradeDefinition[];
   ownedUpgradeIds: Set<string>;
@@ -486,6 +492,10 @@ export interface RenderTextSnapshot {
       kind: DefenseKind;
     } | null;
   };
+  enemyRoutePreview: Array<{
+    laneId: string;
+    points: Vec3[];
+  }>;
   camera?: {
     position: Vec3;
     focus: Vec3;

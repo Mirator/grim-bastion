@@ -19,6 +19,12 @@ export interface CircleBlocker {
   source: "obstacle" | "tower" | "core";
 }
 
+export interface TracePathOptions {
+  maxSteps?: number;
+  stopDistance?: number;
+  minStepDistance?: number;
+}
+
 interface CellCoord {
   x: number;
   z: number;
@@ -270,6 +276,58 @@ export class NavigationGrid {
     }
 
     return this.cellToWorld(bestCell);
+  }
+
+  tracePathToCore(startPosition: Vec3, corePosition: Vec3, options: TracePathOptions = {}): Vec3[] {
+    this.ensureDistanceField(corePosition);
+    const maxSteps = Math.max(1, Math.floor(options.maxSteps ?? this.width * this.height));
+    const stopDistance = Math.max(0.05, options.stopDistance ?? CORE_REACH_RADIUS + NAV_AGENT_RADIUS);
+    const minStepDistance = Math.max(1e-4, options.minStepDistance ?? this.cellSize * 0.2);
+
+    const clampedStart: Vec3 = {
+      x: clamp(startPosition.x, this.minX, this.maxX),
+      y: 0,
+      z: clamp(startPosition.z, this.minZ, this.maxZ),
+    };
+    const points: Vec3[] = [clampedStart];
+    const visited = new Set<number>();
+    let current: Vec3 = clampedStart;
+
+    for (let step = 0; step < maxSteps; step += 1) {
+      const toCoreDistance = Math.hypot(current.x - corePosition.x, current.z - corePosition.z);
+      if (toCoreDistance <= stopDistance) {
+        const last = points[points.length - 1];
+        if (!last || Math.hypot(last.x - corePosition.x, last.z - corePosition.z) > 1e-4) {
+          points.push({ x: corePosition.x, y: corePosition.y, z: corePosition.z });
+        }
+        break;
+      }
+
+      const cell = this.worldToCell(current);
+      const index = this.toIndex(cell.x, cell.z);
+      if (visited.has(index)) {
+        break;
+      }
+      visited.add(index);
+
+      const next = this.sampleFlowTarget(current, corePosition);
+      if (!next) {
+        break;
+      }
+
+      const traveled = Math.hypot(next.x - current.x, next.z - current.z);
+      if (traveled < minStepDistance) {
+        break;
+      }
+
+      current = { x: next.x, y: 0, z: next.z };
+      const last = points[points.length - 1];
+      if (!last || Math.hypot(last.x - current.x, last.z - current.z) >= minStepDistance) {
+        points.push(current);
+      }
+    }
+
+    return points;
   }
 
   wouldTowerPlacementBlockPaths(candidatePosition: Vec3, spawnPoints: Vec3[], corePosition: Vec3): boolean {

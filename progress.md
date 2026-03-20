@@ -304,3 +304,33 @@ Original prompt: Implement whole [grim_bastion_td_concept.md](grim_bastion_td_co
 - Note:
   - The runtime smoke run captured ground enemies and structure interactions in wave 1.
   - Wisp behavior (flying + obstacle passthrough with structure collision) is enforced by blocker-path tests in `tests/navigation-grid.test.ts`.
+
+## 2026-03-20
+- Implemented dynamic enemy route overlay pipeline shared by minimap + 3D lane lines:
+  - added `enemyRoutePreview` to runtime state and automation text snapshot,
+  - switched minimap and world route rendering from static biome lane splines to dynamic route data.
+- Added navigation tracing API in `NavigationGrid`:
+  - `tracePathToCore(start, core, options)` follows flow-field targets with loop protection, max-step cap, and no-progress guard.
+- Added wave-lane selection helper (`orderedWaveLanes`) and wired `GameApp` recompute orchestration:
+  - lane set is derived from current wave template groups (deduped, biome order),
+  - recompute is dirty-triggered (not every frame),
+  - dirty invalidation wired for wave transitions and defense layout changes (tower place/sell; trap place/sell marked too, usually no path effect).
+- Added guarded route fallback:
+  - if traced route is incomplete/unreliable, overlay falls back to authored lane points for that lane.
+- Updated 3D lane mesh sync to signature-based updates so geometry rebuilds only when route points actually change.
+- Added tests:
+  - `tests/navigation-grid.test.ts` extended with trace-to-core/reroute/no-route cap coverage,
+  - new `tests/enemy-route-preview.test.ts` validates wave-lane dedupe/order/fallback/template switching,
+  - updated `tests/testState.ts` fixture for new state field.
+- Verification:
+  - `npm test` passed (14 files, 61 tests),
+  - `npm run build` passed,
+  - Playwright smoke run via `scripts/web_game_playwright_client.js` produced artifacts in `output/web-game-route-preview/` (`shot-0.png`, `state-0.json`) with no `errors-0.json`.
+- 2026-03-20 directional-animation polish:
+  - Updated route visuals to be explicitly one-way toward core:
+    - 3D route lines now use lifted dashed lines with forward dash-flow animation driven by `lineDistance` offset updates (removed bob/pulse behavior).
+    - minimap route lines keep the same dashed style with a single consistent forward dash offset.
+  - Re-verified:
+    - `npm test` passed (14 files, 61 tests),
+    - `npm run build` passed,
+    - Playwright smoke rerun updated artifacts in `output/web-game-route-preview/` with no `errors-0.json`.

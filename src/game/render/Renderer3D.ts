@@ -103,6 +103,10 @@ export class Renderer3D {
 
   private static readonly RETICLE_LAMBDA = 30;
 
+  private static readonly LANE_PATH_BASE_HEIGHT = 0.16;
+
+  private static readonly LANE_PATH_FLOW_SPEED = 2.6;
+
   private static readonly CAMERA_POSITION_DEADZONE_SQ = 0.015 * 0.015;
 
   private static readonly CAMERA_FOCUS_DEADZONE_SQ = 0.02 * 0.02;
@@ -185,7 +189,7 @@ export class Renderer3D {
 
   private activeBiomeBackgroundIndex = -1;
 
-  private activeLaneBiomeIndex = -1;
+  private activeLaneSignature = "";
 
   private activeObstacleBiomeIndex = -1;
 
@@ -439,6 +443,7 @@ export class Renderer3D {
     this.syncProjectileMeshes(state);
     this.syncObstacles(state);
     this.syncLanePaths(state);
+    this.animateLanePaths(state.time);
     this.syncPlacementPreview(state);
     this.syncHazards(state);
 
@@ -721,8 +726,19 @@ export class Renderer3D {
     }
   }
 
+  private laneRouteSignature(state: MutableGameState): string {
+    return state.enemyRoutePreview
+      .map(
+        (laneRoute) => `${laneRoute.laneId}:${laneRoute.points
+          .map((point) => `${point.x.toFixed(2)},${point.z.toFixed(2)}`)
+          .join("|")}`,
+      )
+      .join(";");
+  }
+
   private syncLanePaths(state: MutableGameState): void {
-    if (state.currentBiomeIndex === this.activeLaneBiomeIndex) {
+    const signature = this.laneRouteSignature(state);
+    if (signature === this.activeLaneSignature) {
       return;
     }
 
@@ -733,25 +749,52 @@ export class Renderer3D {
     }
     this.laneLineMeshes.clear();
 
-    const biome = biomeSequence[state.currentBiomeIndex] ?? biomeSequence[biomeSequence.length - 1];
-    if (!biome) {
-      this.activeLaneBiomeIndex = state.currentBiomeIndex;
-      return;
-    }
-
-    for (const lane of biome.lanes) {
+    for (const laneRoute of state.enemyRoutePreview) {
+      if (laneRoute.points.length < 2) {
+        continue;
+      }
       const geometry = new THREE.BufferGeometry().setFromPoints(
-        lane.points.map((p) => new THREE.Vector3(p.x, 0.04, p.z)),
+        laneRoute.points.map((point) => new THREE.Vector3(point.x, 0, point.z)),
       );
       const line = new THREE.Line(
         geometry,
-        new THREE.LineBasicMaterial({ color: "#8aa7c2", transparent: true, opacity: 0.4 }),
+        new THREE.LineDashedMaterial({
+          color: "#9fd7ff",
+          dashSize: 1.2,
+          gapSize: 0.7,
+          transparent: true,
+          opacity: 0.58,
+        }),
       );
+      line.computeLineDistances();
+      line.position.y = Renderer3D.LANE_PATH_BASE_HEIGHT;
+      const lineDistanceAttr = geometry.getAttribute("lineDistance");
+      if (lineDistanceAttr) {
+        line.userData.baseLineDistances = Float32Array.from(lineDistanceAttr.array as ArrayLike<number>);
+      }
       this.scene.add(line);
-      this.laneLineMeshes.set(lane.id, line);
+      this.laneLineMeshes.set(laneRoute.laneId, line);
     }
 
-    this.activeLaneBiomeIndex = state.currentBiomeIndex;
+    this.activeLaneSignature = signature;
+  }
+
+  private animateLanePaths(time: number): void {
+    for (const laneLine of this.laneLineMeshes.values()) {
+      const material = laneLine.material as THREE.LineDashedMaterial;
+      const cycle = Math.max(0.001, material.dashSize + material.gapSize);
+      const shift = (time * Renderer3D.LANE_PATH_FLOW_SPEED) % cycle;
+      const lineDistance = laneLine.geometry.getAttribute("lineDistance");
+      const base = laneLine.userData.baseLineDistances as Float32Array | undefined;
+      if (!lineDistance || !base || lineDistance.count !== base.length) {
+        continue;
+      }
+
+      for (let i = 0; i < lineDistance.count; i += 1) {
+        lineDistance.setX(i, base[i]! - shift);
+      }
+      lineDistance.needsUpdate = true;
+    }
   }
 
   private syncObstacles(state: MutableGameState): void {
