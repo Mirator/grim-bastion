@@ -18,6 +18,17 @@ npm run build
 npm test
 ```
 
+## GitHub Pages
+
+This repo now includes a Pages deployment workflow at `.github/workflows/deploy-pages.yml`.
+
+1. Open your GitHub repository settings.
+2. Go to `Settings -> Pages`.
+3. Set the build source to `GitHub Actions`.
+4. Push to `main` or `master`, or run the `Deploy GitHub Pages` workflow manually.
+
+The production build now uses relative asset URLs, so the generated `dist/` works under a project site path such as `https://mirator.github.io/grim-bastion/`.
+
 ## Controls
 
 - `WASD` / arrow keys move hero (camera-relative)

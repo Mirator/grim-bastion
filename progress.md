@@ -362,5 +362,15 @@ Original prompt: Implement whole [grim_bastion_td_concept.md](grim_bastion_td_co
   - Playwright repro runs completed with artifacts:
     - `output/web-game-cursor-aim-repro/`
     - `output/web-game-cursor-aim-repro-final/`
-  - No Playwright error JSON artifacts were produced in these runs.
+- No Playwright error JSON artifacts were produced in these runs.
 - 2026-03-23 follow-up: hid the in-world 3D reticle sphere (`reticleMesh.visible = false`) so only the center crosshair remains; verified with `npm test`, `npm run build`, and Playwright screenshot artifacts in `output/web-game-no-reticle-sphere/`.
+- 2026-03-23 GitHub Pages deployment pass:
+  - set Vite `base: "./"` so the production build resolves assets correctly from a GitHub Pages project-site subpath,
+  - added `.github/workflows/deploy-pages.yml` to build and deploy `dist/` with the official Pages actions on pushes to `main`/`master` or manual dispatch,
+  - added an explicit SVG favicon (`public/favicon.svg`) and linked it from `index.html` to remove the static-preview `favicon.ico` 404 console error,
+  - documented the Pages setup flow in `README.md`.
+- Verification:
+  - `npm run build` passed after the Pages config changes.
+  - `dist/index.html` now references relative asset URLs (`./assets/...`).
+  - Direct Playwright browser load against `npm run preview -- --host 127.0.0.1 --port 4173` showed the game loading with `0 errors` in the console after the favicon fix (warnings only from existing Three/Rapier runtime notices).
+  - Local `scripts/web_game_playwright_client.js` smoke run produced render artifacts in `output/web-game-github-pages/` (`shot-0.png`, `state-0.json`); the local helper appeared to hang during teardown after artifact capture, but the served page itself loaded and rendered correctly in direct Playwright inspection.
