@@ -1,7 +1,7 @@
 import { biomeSequence } from "../data/biomes";
 import { towerArchetypes, trapArchetypes } from "../data/archetypes";
 import { CORE_BUILD_BUFFER_RADIUS, CORE_WORLD_POSITION } from "../constants";
-import { BUILD_HOTKEY_ORDER, canToggleCombatView } from "../systems/gameplayRules";
+import { BUILD_HOTKEY_ORDER, canToggleCombatView, isRunInteractiveMode } from "../systems/gameplayRules";
 import type { MutableGameState, TowerType, TrapType, UpgradeDefinition, Vec3 } from "../types";
 
 export interface HudEvents {
@@ -55,9 +55,21 @@ export class HudUI {
 
   private readonly buildActionBarEl: HTMLElement;
 
+  private readonly gameplayHudEl: HTMLElement;
+
   private readonly upgradePanelEl: HTMLElement;
 
   private readonly upgradeCardsEl: HTMLElement;
+
+  private readonly runMenuEl: HTMLElement;
+
+  private readonly runMenuEyebrowEl: HTMLElement;
+
+  private readonly runMenuTitleEl: HTMLElement;
+
+  private readonly runMenuDescriptionEl: HTMLElement;
+
+  private readonly runMenuSummaryEl: HTMLElement;
 
   private readonly minimap: HTMLCanvasElement;
 
@@ -75,38 +87,48 @@ export class HudUI {
     this.root = root;
     this.events = events;
     this.root.innerHTML = `
-      <div id="crosshair" aria-hidden="true"></div>
-      <div class="hud-top">
-        <div class="hud-panel" id="resources"></div>
-        <div class="hud-panel" id="wave"></div>
-        <div class="hud-panel" id="hero"></div>
-      </div>
-      <div class="hud-right">
-        <div class="hud-panel mode" id="mode"></div>
-        <div class="hud-panel controls">
-          <h3>Controls</h3>
-          <p>Mouse look (locked), center crosshair aim, LMB fire, Q/E abilities, Shift dash, Space jump.</p>
-          <p>Build mode: LMB place selected defense at reticle, RMB sell nearest defense.</p>
-          <p>Enter starts run. N starts wave in-run. B toggles build/combat view in-run.</p>
-          <p>Build action bar: 1-8 select slot, mouse wheel or [ / ] cycle slot.</p>
-          <p>R weapon, L loadout, F fullscreen.</p>
+      <div id="gameplay-hud">
+        <div id="crosshair" aria-hidden="true"></div>
+        <div class="hud-top">
+          <div class="hud-panel" id="resources"></div>
+          <div class="hud-panel" id="wave"></div>
+          <div class="hud-panel" id="hero"></div>
         </div>
-        <div class="hud-panel actions">
-          <button id="start-run">Start Run (Enter)</button>
-          <button id="start-wave">Start Wave (N)</button>
-          <button id="toggle-build">Toggle Build (B)</button>
-          <button id="switch-loadout">Switch Loadout (L)</button>
+        <div class="hud-right">
+          <div class="hud-panel mode" id="mode"></div>
+          <div class="hud-panel controls">
+            <h3>Controls</h3>
+            <p>Mouse look (locked), center crosshair aim, LMB fire, Q/E abilities, Shift dash, Space jump.</p>
+            <p>Build mode: LMB place selected defense at reticle, RMB sell nearest defense.</p>
+            <p>N starts the next wave. B toggles build/combat view in-run.</p>
+            <p>Build action bar: 1-8 select slot, mouse wheel or [ / ] cycle slot.</p>
+            <p>R weapon, L loadout, F fullscreen.</p>
+          </div>
+          <div class="hud-panel actions">
+            <button id="start-wave">Start Wave (N)</button>
+            <button id="toggle-build">Toggle Build (B)</button>
+            <button id="switch-loadout">Switch Loadout (L)</button>
+          </div>
+        </div>
+        <div class="hud-bottom">
+          <div class="hud-panel minimap-panel">
+            <h3>Minimap</h3>
+            <canvas id="minimap" width="220" height="160"></canvas>
+          </div>
+          <div class="hud-panel tips" id="tips"></div>
+        </div>
+        <div class="build-action-bar hidden" id="build-action-bar">
+          <div id="build-list" class="build-list-horizontal"></div>
         </div>
       </div>
-      <div class="hud-bottom">
-        <div class="hud-panel minimap-panel">
-          <h3>Minimap</h3>
-          <canvas id="minimap" width="220" height="160"></canvas>
+      <div class="overlay-run-menu hidden" id="run-menu">
+        <div class="run-menu-card">
+          <p class="run-menu-eyebrow" id="run-menu-eyebrow"></p>
+          <h1 id="run-menu-title"></h1>
+          <p class="run-menu-description" id="run-menu-description"></p>
+          <div class="run-menu-summary" id="run-menu-summary"></div>
+          <button id="menu-start-run" class="menu-primary-button">Start</button>
         </div>
-        <div class="hud-panel tips" id="tips"></div>
-      </div>
-      <div class="build-action-bar hidden" id="build-action-bar">
-        <div id="build-list" class="build-list-horizontal"></div>
       </div>
       <div class="overlay-upgrade hidden" id="upgrade-panel">
         <h2>Choose 1 Upgrade</h2>
@@ -114,6 +136,7 @@ export class HudUI {
       </div>
     `;
 
+    this.gameplayHudEl = this.query("#gameplay-hud");
     this.resourcesEl = this.query("#resources");
     this.waveEl = this.query("#wave");
     this.heroEl = this.query("#hero");
@@ -123,6 +146,11 @@ export class HudUI {
     this.buildListEl = this.query("#build-list");
     this.upgradePanelEl = this.query("#upgrade-panel");
     this.upgradeCardsEl = this.query("#upgrade-cards");
+    this.runMenuEl = this.query("#run-menu");
+    this.runMenuEyebrowEl = this.query("#run-menu-eyebrow");
+    this.runMenuTitleEl = this.query("#run-menu-title");
+    this.runMenuDescriptionEl = this.query("#run-menu-description");
+    this.runMenuSummaryEl = this.query("#run-menu-summary");
 
     this.minimap = this.query<HTMLCanvasElement>("#minimap");
     const context = this.minimap.getContext("2d");
@@ -131,7 +159,7 @@ export class HudUI {
     }
     this.minimapCtx = context;
 
-    this.startRunButton = this.query<HTMLButtonElement>("#start-run");
+    this.startRunButton = this.query<HTMLButtonElement>("#menu-start-run");
     this.startWaveButton = this.query<HTMLButtonElement>("#start-wave");
     this.toggleBuildButton = this.query<HTMLButtonElement>("#toggle-build");
     this.switchLoadoutButton = this.query<HTMLButtonElement>("#switch-loadout");
@@ -146,6 +174,7 @@ export class HudUI {
 
   update(state: MutableGameState): void {
     const biome = biomeSequence[state.currentBiomeIndex] ?? biomeSequence[biomeSequence.length - 1]!;
+    const showRunMenu = !isRunInteractiveMode(state.mode);
 
     this.resourcesEl.innerHTML = [
       `<strong>Resources</strong>`,
@@ -195,13 +224,15 @@ export class HudUI {
 
     this.renderUpgradePanel(state);
     this.renderMinimap(state);
+    this.renderRunMenu(state);
+    this.gameplayHudEl.classList.toggle("hidden", showRunMenu);
+    this.runMenuEl.classList.toggle("hidden", !showRunMenu);
     this.buildActionBarEl.classList.toggle("hidden", state.mode !== "build");
     this.updateBuildSelection(state.selectedBuildType);
 
-    const canStartRun = state.mode === "menu" || state.mode === "game-over" || state.mode === "victory";
     const canStartWave = !state.wave.active && (state.mode === "build" || state.mode === "wave" || state.mode === "between-biomes");
     const canToggleView = canToggleCombatView(state.mode);
-    this.startRunButton.disabled = !canStartRun;
+    this.startRunButton.disabled = !showRunMenu;
     this.startWaveButton.disabled = !canStartWave;
     this.toggleBuildButton.disabled = !canToggleView;
   }
@@ -283,6 +314,44 @@ export class HudUI {
         }
       });
     });
+  }
+
+  private renderRunMenu(state: MutableGameState): void {
+    if (state.mode === "victory") {
+      this.runMenuEyebrowEl.textContent = "Run Complete";
+      this.runMenuTitleEl.textContent = "Victory";
+      this.runMenuDescriptionEl.textContent = "The bastion held. Bank your progress and launch another run from build phase.";
+      this.runMenuSummaryEl.innerHTML = [
+        `Biome cleared: ${state.currentBiomeIndex + 1} / ${biomeSequence.length}`,
+        `Waves cleared: ${formatNumber(state.runStats.wavesCleared)}`,
+        `Essence carried: ${formatNumber(state.resources.essence)}`,
+      ].join("<br />");
+      this.startRunButton.textContent = "Restart Run";
+      return;
+    }
+
+    if (state.mode === "game-over") {
+      this.runMenuEyebrowEl.textContent = "Run Failed";
+      this.runMenuTitleEl.textContent = "The Bastion Fell";
+      this.runMenuDescriptionEl.textContent = "The current run is over. Reset into build phase and try a new defense plan.";
+      this.runMenuSummaryEl.innerHTML = [
+        `Biome reached: ${state.currentBiomeIndex + 1} / ${biomeSequence.length}`,
+        `Waves cleared: ${formatNumber(state.runStats.wavesCleared)}`,
+        `Kills logged: ${formatNumber(state.runStats.kills)}`,
+      ].join("<br />");
+      this.startRunButton.textContent = "Restart Run";
+      return;
+    }
+
+    this.runMenuEyebrowEl.textContent = "Roguelite Tower Defense";
+    this.runMenuTitleEl.textContent = "Grim Bastion";
+    this.runMenuDescriptionEl.textContent = "Shape the arena in build phase, trigger the next wave when ready, and keep the core alive.";
+    this.runMenuSummaryEl.innerHTML = [
+      `Click Start to enter build phase immediately.`,
+      `WASD move, mouse aim, LMB attack or place, N start wave.`,
+      `B switches build/combat view, Q/E abilities, Shift dash.`,
+    ].join("<br />");
+    this.startRunButton.textContent = "Start";
   }
 
   private renderMinimap(state: MutableGameState): void {

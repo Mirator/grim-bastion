@@ -12,7 +12,7 @@ menu -> build -> wave -> upgrade -> build
 ```
 
 Notes:
-- `Enter` starts runs only.
+- Menu and restart overlays start runs only.
 - `N` starts waves only (in run-eligible modes).
 - `B` toggles build/combat view only where toggling is allowed.
 

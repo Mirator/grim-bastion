@@ -5,6 +5,7 @@ import {
   computeEnemyMoveSpeed,
   computeStatusMoveMultiplier,
   computeWitchAuraMultiplier,
+  isRunInteractiveMode,
   nextCombatViewMode,
   resolveCursorAimDirection,
   resolveDigitHotkeyAction,
@@ -16,6 +17,14 @@ import {
 } from "../src/game/systems/gameplayRules";
 
 describe("gameplay rules", () => {
+  it("treats menu and terminal results as non-interactive overlays", () => {
+    expect(isRunInteractiveMode("menu")).toBe(false);
+    expect(isRunInteractiveMode("game-over")).toBe(false);
+    expect(isRunInteractiveMode("victory")).toBe(false);
+    expect(isRunInteractiveMode("build")).toBe(true);
+    expect(isRunInteractiveMode("upgrade")).toBe(true);
+  });
+
   it("allows combat view toggle only in run view states", () => {
     expect(canToggleCombatView("build")).toBe(true);
     expect(canToggleCombatView("wave")).toBe(true);

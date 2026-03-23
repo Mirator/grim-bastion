@@ -140,6 +140,27 @@ async function getCanvasHandle(page) {
   return handle.asElement();
 }
 
+function parseActionPayload(payload) {
+  if (Array.isArray(payload)) {
+    return {
+      clickSelector: null,
+      steps: payload,
+    };
+  }
+
+  if (!payload || typeof payload !== "object") {
+    return {
+      clickSelector: null,
+      steps: null,
+    };
+  }
+
+  return {
+    clickSelector: typeof payload.clickSelector === "string" ? payload.clickSelector : null,
+    steps: Array.isArray(payload.steps) ? payload.steps : null,
+  };
+}
+
 async function captureCanvasPngBase64(canvas) {
   return canvas.evaluate((c) => {
     if (!c || typeof c.toDataURL !== "function") return "";
@@ -285,26 +306,17 @@ async function main() {
     window.dispatchEvent(new Event("resize"));
   });
 
-  let canvas = await getCanvasHandle(page);
-
-  if (args.clickSelector) {
-    try {
-      await page.click(args.clickSelector, { timeout: 5000 });
-      await page.waitForTimeout(250);
-    } catch (err) {
-      console.warn("Failed to click selector", args.clickSelector, err);
-    }
-  }
   let steps = null;
+  let payloadClickSelector = null;
   if (args.actionsFile) {
     const raw = fs.readFileSync(args.actionsFile, "utf-8");
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) steps = parsed;
-    if (parsed && Array.isArray(parsed.steps)) steps = parsed.steps;
+    const parsed = parseActionPayload(JSON.parse(raw));
+    steps = parsed.steps;
+    payloadClickSelector = parsed.clickSelector;
   } else if (args.actionsJson) {
-    const parsed = JSON.parse(args.actionsJson);
-    if (Array.isArray(parsed)) steps = parsed;
-    if (parsed && Array.isArray(parsed.steps)) steps = parsed.steps;
+    const parsed = parseActionPayload(JSON.parse(args.actionsJson));
+    steps = parsed.steps;
+    payloadClickSelector = parsed.clickSelector;
   } else if (args.click) {
     steps = [
       {
@@ -317,6 +329,17 @@ async function main() {
   }
   if (!steps) {
     throw new Error("Actions are required. Use --actions-file, --actions-json, or --click.");
+  }
+
+  let canvas = await getCanvasHandle(page);
+  const initialClickSelector = args.clickSelector ?? payloadClickSelector;
+  if (initialClickSelector) {
+    try {
+      await page.click(initialClickSelector, { timeout: 5000 });
+      await page.waitForTimeout(250);
+    } catch (err) {
+      console.warn("Failed to click selector", initialClickSelector, err);
+    }
   }
 
   for (let i = 0; i < args.iterations; i++) {

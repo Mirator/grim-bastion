@@ -21,8 +21,8 @@ Define the top-level structure of a run, including mode transitions, start contr
   - `between-biomes`: biome transition checkpoint.
   - `victory` / `game-over`: terminal states.
 - Run start controls:
-  - `Enter` emits run-start only.
-  - `Start Run` UI button triggers run-start only.
+  - `Start` on the menu overlay triggers run-start only.
+  - `Restart Run` on terminal overlays triggers run-start only.
 - Wave start controls:
   - `N` emits wave-start only.
   - `Start Wave` UI button triggers wave-start only.

@@ -37,6 +37,7 @@ import {
   computeJumpArcHeight,
   computeEnemyMoveSpeed,
   computeWitchAuraMultiplier,
+  isRunInteractiveMode,
   nextCombatViewMode,
   resolveCursorAimDirection,
   resolveDigitHotkeyAction,
@@ -193,6 +194,7 @@ export class GameApp {
     this.audio = new AudioManager(this.save.settings.masterVolume);
 
     this.state = this.createInitialState();
+    this.syncInputMode();
     this.renderer.initializeCameraRig(this.state.hero.position, this.state.hero.facing);
     this.currentInput = this.sampleInput();
     this.reticleFrame = buildReticleFrameData(v3(), v3());
@@ -504,8 +506,10 @@ export class GameApp {
     if (this.state.mode === "wave") {
       return;
     }
+    this.input.clearState();
     this.resetRunState();
     this.state.mode = "build";
+    this.syncInputMode();
     this.audio.play("wave-start");
   }
 
@@ -542,8 +546,8 @@ export class GameApp {
       this.toggleFullscreen();
     }
 
-    if (input.startRun && (this.state.mode === "menu" || this.state.mode === "game-over" || this.state.mode === "victory")) {
-      this.startRun();
+    if (!isRunInteractiveMode(this.state.mode)) {
+      return;
     }
 
     if (input.startWave) {
@@ -591,6 +595,10 @@ export class GameApp {
     this.ensureNavigationState();
     this.ensureEnemyRoutePreview();
     this.updateReticleFrame(dt);
+    if (!isRunInteractiveMode(this.state.mode)) {
+      this.syncHeroPhysics();
+      return;
+    }
     this.updateHero(dt, input);
     this.updateHeroAbilities(dt, input);
     this.updateShrines(dt);
@@ -622,6 +630,8 @@ export class GameApp {
     if (this.state.baseCoreHealth <= 0 && this.state.mode !== "game-over" && this.state.mode !== "victory") {
       this.finishRun("defeat");
       this.state.mode = "game-over";
+      this.input.clearState();
+      this.syncInputMode();
     }
   }
 
@@ -1749,6 +1759,8 @@ export class GameApp {
     if (transition === "victory") {
       this.state.mode = "victory";
       this.finishRun("victory");
+      this.input.clearState();
+      this.syncInputMode();
       return;
     }
     if (transition === "between-biomes") {
@@ -1802,6 +1814,10 @@ export class GameApp {
       }
     });
     this.save = updated;
+  }
+
+  private syncInputMode(): void {
+    this.input.setPointerLockEnabled(isRunInteractiveMode(this.state.mode));
   }
 
   private updateReticleFrame(dt: number): void {

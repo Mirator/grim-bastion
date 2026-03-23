@@ -19,7 +19,8 @@ Describe how gameplay-critical information is surfaced so players can make fast,
   - Hero panel: health, weapon, ability cooldowns, and attack cadence context.
   - Mode/tips panels: current phase and run stat summaries.
 - Action controls:
-  - Buttons mirror key gameplay actions (start run, start wave, toggle build, switch loadout).
+  - Menu and restart overlays provide the only run-start button.
+  - In-run action buttons cover wave start, build/combat toggling, and loadout switching.
   - Build menu lists available tower/trap entries and costs.
 - Upgrade overlay:
   - Appears only during `upgrade` mode.

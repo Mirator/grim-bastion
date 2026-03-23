@@ -9,7 +9,6 @@ export interface InputState {
   jump: boolean;
   toggleBuild: boolean;
   startWave: boolean;
-  startRun: boolean;
   digitHotkey: number | null;
   cycleWeapon: boolean;
   switchLoadout: boolean;
@@ -56,10 +55,6 @@ export function isJumpKeyCode(code: string): boolean {
   return code === "Space";
 }
 
-export function isStartRunKeyCode(code: string): boolean {
-  return code === "Enter";
-}
-
 export function isStartWaveKeyCode(code: string): boolean {
   return code === "KeyN";
 }
@@ -83,6 +78,8 @@ export class InputController {
   private transient: Record<string, boolean> = {};
 
   private pointerLocked = false;
+
+  private pointerLockEnabled = true;
 
   private readonly target: HTMLElement | Window;
 
@@ -141,7 +138,6 @@ export class InputController {
       jump: this.consumeTransient("jump"),
       toggleBuild: this.consumeTransient("toggleBuild"),
       startWave: this.consumeTransient("startWave"),
-      startRun: this.consumeTransient("startRun"),
       digitHotkey: this.consumeDigitHotkey(),
       cycleWeapon: this.consumeTransient("cycleWeapon"),
       switchLoadout: this.consumeTransient("switchLoadout"),
@@ -156,6 +152,17 @@ export class InputController {
     };
 
     return state;
+  }
+
+  setPointerLockEnabled(enabled: boolean): void {
+    this.pointerLockEnabled = enabled;
+    if (!enabled && document.pointerLockElement === this.target) {
+      void document.exitPointerLock();
+    }
+  }
+
+  clearState(): void {
+    this.resetInputState();
   }
 
   private axis(negativeKeys: string[], positiveKeys: string[]): number {
@@ -196,9 +203,6 @@ export class InputController {
         break;
       case "KeyN":
         this.transient.startWave = true;
-        break;
-      case "Enter":
-        this.transient.startRun = true;
         break;
       case "KeyQ":
         this.transient.ability1 = true;
@@ -288,14 +292,13 @@ export class InputController {
   };
 
   private onBlur = (): void => {
-    this.keysDown.clear();
-    this.buttonsDown.clear();
-    this.transient = {};
-    this.lookDelta.x = 0;
-    this.lookDelta.y = 0;
+    this.resetInputState();
   };
 
   private requestPointerLock(): void {
+    if (!this.pointerLockEnabled) {
+      return;
+    }
     if (!(this.target instanceof HTMLElement)) {
       return;
     }
@@ -305,5 +308,13 @@ export class InputController {
     this.target.requestPointerLock().catch(() => {
       // Ignore; pointer lock can fail without a valid user gesture.
     });
+  }
+
+  private resetInputState(): void {
+    this.keysDown.clear();
+    this.buttonsDown.clear();
+    this.transient = {};
+    this.lookDelta.x = 0;
+    this.lookDelta.y = 0;
   }
 }

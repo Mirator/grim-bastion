@@ -151,7 +151,8 @@ body::before {
 
 .actions button,
 .build-item,
-.upgrade-card {
+.upgrade-card,
+.menu-primary-button {
   border: 1px solid rgba(190, 221, 241, 0.35);
   background: linear-gradient(160deg, rgba(35, 51, 67, 0.86), rgba(19, 31, 42, 0.93));
   color: var(--text);
@@ -165,7 +166,8 @@ body::before {
 
 .actions button:hover,
 .build-item:hover,
-.upgrade-card:hover {
+.upgrade-card:hover,
+.menu-primary-button:hover {
   border-color: rgba(200, 235, 255, 0.7);
   transform: translateY(-1px);
   box-shadow: 0 8px 22px rgba(7, 10, 15, 0.35);
@@ -263,6 +265,68 @@ body::before {
   pointer-events: auto;
 }
 
+.overlay-run-menu {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1.2rem;
+  pointer-events: auto;
+  background:
+    radial-gradient(circle at 50% 35%, rgba(64, 108, 136, 0.2), transparent 34%),
+    rgba(6, 10, 15, 0.62);
+  backdrop-filter: blur(10px);
+}
+
+.run-menu-card {
+  width: min(560px, calc(100vw - 2.4rem));
+  padding: 1.4rem 1.35rem 1.25rem;
+  border: 1px solid rgba(179, 214, 235, 0.34);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(21, 32, 43, 0.96), rgba(10, 16, 24, 0.96));
+  box-shadow: 0 28px 52px rgba(0, 0, 0, 0.4);
+}
+
+.run-menu-eyebrow {
+  margin: 0 0 0.45rem;
+  color: rgba(183, 221, 238, 0.84);
+  font-size: 0.82rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+#run-menu-title {
+  margin: 0;
+  font-size: clamp(2rem, 6vw, 3.35rem);
+  line-height: 0.96;
+  letter-spacing: 0.05em;
+}
+
+.run-menu-description {
+  margin: 0.75rem 0 0;
+  max-width: 34rem;
+  color: rgba(229, 238, 246, 0.9);
+  font-size: 1rem;
+  line-height: 1.55;
+}
+
+.run-menu-summary {
+  margin-top: 1rem;
+  padding-top: 0.95rem;
+  border-top: 1px solid rgba(173, 210, 233, 0.2);
+  color: rgba(208, 228, 238, 0.82);
+  line-height: 1.65;
+}
+
+.menu-primary-button {
+  margin-top: 1.15rem;
+  min-width: 180px;
+  padding: 0.72rem 1rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
 .overlay-upgrade h2 {
   margin: 0 0 0.7rem;
   color: var(--upgrade);
@@ -344,5 +408,14 @@ body::before {
 
   #upgrade-cards {
     grid-template-columns: 1fr;
+  }
+
+  .overlay-run-menu {
+    padding: 0.8rem;
+  }
+
+  .run-menu-card {
+    width: 100%;
+    padding: 1.1rem 1rem 0.95rem;
   }
 }

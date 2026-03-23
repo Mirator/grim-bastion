@@ -4,7 +4,6 @@ import {
   digitHotkeyFromCode,
   isDashKeyCode,
   isJumpKeyCode,
-  isStartRunKeyCode,
   isStartWaveKeyCode,
 } from "../src/game/systems/InputController";
 
@@ -28,9 +27,7 @@ describe("input controller hotkey mapping", () => {
     expect(isDashKeyCode("Space")).toBe(false);
   });
 
-  it("uses strict start controls: Enter starts run, N starts wave", () => {
-    expect(isStartRunKeyCode("Enter")).toBe(true);
-    expect(isStartRunKeyCode("KeyN")).toBe(false);
+  it("uses strict start controls: only N starts waves", () => {
     expect(isStartWaveKeyCode("KeyN")).toBe(true);
     expect(isStartWaveKeyCode("Enter")).toBe(false);
   });

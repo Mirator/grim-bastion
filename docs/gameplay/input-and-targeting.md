@@ -28,9 +28,10 @@ Describe how keyboard/mouse input is sampled and converted into movement, combat
   - `L`: switch loadout preset.
   - `F`: toggle fullscreen.
 - Mode/run control keys (strict separation):
-  - `Enter`: run-start signal only.
   - `N`: wave-start signal only.
   - `B`: combat-view toggle signal only.
+- Run start UI:
+  - Menu and terminal overlays expose the only run-start button.
 - Build selection controls:
   - `1-8` map to zero-based build slots in `build`.
   - `[` / `]` cycle build selection in `build`.
@@ -38,7 +39,7 @@ Describe how keyboard/mouse input is sampled and converted into movement, combat
 - Upgrade selection controls:
   - In `upgrade`, digit hotkeys map only `1-3` to choice indexes `0-2`.
 - Pointer handling:
-  - Pointer lock is requested on keydown/mousedown/click when possible.
+  - Pointer lock is requested on keydown/mousedown/click only while the run is interactive.
   - If pointer lock is unavailable, absolute cursor position is still sampled.
   - Browser blur clears keys/buttons/transients to avoid stuck inputs.
 
@@ -46,7 +47,7 @@ Describe how keyboard/mouse input is sampled and converted into movement, combat
 
 - Build placement/sell actions are mode-gated to `build`.
 - Digit hotkeys are mode-routed (`build` slots vs `upgrade` picks).
-- `Enter` no longer emits wave-start side effects.
+- `menu`, `game-over`, and `victory` block run interaction and pointer-lock requests.
 - `N` no longer starts runs from terminal modes.
 - `B` only toggles view in toggle-eligible in-run modes.
 - Input transients are consumed once per sample.

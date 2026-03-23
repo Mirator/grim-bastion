@@ -42,7 +42,7 @@ The production build now uses relative asset URLs, so the generated `dist/` work
 - `L`: switch loadout preset
 - `1-8`: select build slot in `build`; in `upgrade`, `1/2/3` pick upgrade card
 - `[` / `]` and mouse wheel: cycle build selection in `build`
-- `Enter`: start run (`menu`/`game-over`/`victory`)
+- `Start` button in the menu or restart overlay: begin a run and enter `build`
 - `N`: start wave in run-eligible modes (`build`, `wave`, `between-biomes`)
 - `B`: toggle `build`/`wave` view in run-eligible modes (`between-biomes` routes to `build`)
 - `F`: toggle fullscreen (`Esc` exits fullscreen)

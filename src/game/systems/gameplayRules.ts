@@ -30,6 +30,10 @@ export function canToggleCombatView(mode: GameMode): boolean {
   return mode === "build" || mode === "wave" || mode === "between-biomes";
 }
 
+export function isRunInteractiveMode(mode: GameMode): boolean {
+  return mode !== "menu" && mode !== "game-over" && mode !== "victory";
+}
+
 export function nextCombatViewMode(mode: GameMode): GameMode {
   if (!canToggleCombatView(mode)) {
     return mode;
