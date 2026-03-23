@@ -7,6 +7,8 @@ export type GameMode =
   | "game-over"
   | "victory";
 
+export type PostUpgradeTransition = "none" | "between-biomes" | "victory";
+
 export type Rarity = "common" | "uncommon" | "rare" | "wild";
 
 export type EnemyType =
@@ -184,6 +186,12 @@ export interface TrapState {
 
 export type ProjectileSource = "hero" | "tower" | "ability";
 
+export interface ProjectileHitProc {
+  applyPoison: boolean;
+  critLightningDamage: number;
+  critLightningChains: number;
+}
+
 export interface ProjectileState {
   id: string;
   source: ProjectileSource;
@@ -197,6 +205,7 @@ export interface ProjectileState {
   chainRemaining: number;
   targetId: string | null;
   tags: string[];
+  hitProc: ProjectileHitProc | null;
 }
 
 export interface FloatingText {
@@ -391,6 +400,7 @@ export interface MutableGameState {
   enemyRoutePreview: EnemyRoutePreview[];
   wave: WaveRuntimeState;
   availableUpgrades: UpgradeDefinition[];
+  postUpgradeTransition: PostUpgradeTransition;
   ownedUpgradeIds: Set<string>;
   baseCoreHealth: number;
   baseCoreMaxHealth: number;

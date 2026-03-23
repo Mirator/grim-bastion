@@ -56,6 +56,14 @@ export function isJumpKeyCode(code: string): boolean {
   return code === "Space";
 }
 
+export function isStartRunKeyCode(code: string): boolean {
+  return code === "Enter";
+}
+
+export function isStartWaveKeyCode(code: string): boolean {
+  return code === "KeyN";
+}
+
 export function buildCycleDirectionFromWheelDelta(deltaY: number): 1 | -1 | 0 {
   if (!Number.isFinite(deltaY) || deltaY === 0) {
     return 0;
@@ -191,7 +199,6 @@ export class InputController {
         break;
       case "Enter":
         this.transient.startRun = true;
-        this.transient.startWave = true;
         break;
       case "KeyQ":
         this.transient.ability1 = true;

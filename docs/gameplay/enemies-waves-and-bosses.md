@@ -2,56 +2,59 @@
 
 ## Purpose
 
-Describe hostile encounter structure: enemy archetypes, wave spawning, boss escalation, and core pressure patterns.
+Describe enemy roles, wave queue behavior, biome pacing, and boss escalation exactly as implemented.
 
 ## What It Does
 
-- Converts biome wave templates into live spawn queues.
-- Defines enemy roles and movement behavior across lanes.
-- Escalates difficulty through elite cadence and boss checkpoints.
-- Delivers run stakes by threatening the bastion core.
+- Converts biome wave templates into timed spawn queues.
+- Spawns enemy archetypes with wave scaling and optional elite flags.
+- Uses dynamic ground navigation plus lane-based flying routes.
+- Resolves core reaches, enemy rewards, and wave/biome transitions.
 
 ## How It Works
 
 - Wave spawning:
-  - Wave templates define enemy groups, counts, intervals, lane IDs, and optional bosses.
-  - Start of wave builds a queue and tracks estimated remaining enemies.
-  - Group entries spawn over time until exhausted.
-  - Bosses spawn after group completion when configured.
-- Enemy roles:
-  - `grunt`: baseline pressure unit.
-  - `hound`: fast lane progress and occasional surge behavior.
+  - Starting a wave builds a spawn queue from the current template groups.
+  - Each queue entry tracks `remaining`, `timer`, and `spawned` count.
+  - Elite cadence uses `eliteEvery`, but the first spawned unit of a group is never elite.
+  - If configured, boss spawns after all groups finish and no living boss exists.
+- Enemy roles (data archetypes):
+  - `grunt`: baseline lane pressure.
+  - `hound`: fast unit with occasional random path-progress rollback behavior.
   - `brute`: high-health frontline.
-  - `witch`: local aura support to nearby enemies.
-  - `wisp`: flying threat that follows flying paths.
-  - `juggernaut`: heavy threat with extra punishment on contact/death events.
-  - `boss`: phase-based milestone enemy.
+  - `witch`: grants nearby enemies speed aura via local stacking multiplier.
+  - `wisp`: flying enemy using flying lane points.
+  - `juggernaut`: heavy unit; also causes extra core damage on escape and tower shockwave on death.
+  - `boss`: high-health milestone enemy with scripted phase events.
 - Movement and pathing:
-  - Ground enemies use dynamic shortest-path routing on a shared navigation grid.
-  - Navigation blockers are biome obstacles plus placed towers (traps do not block paths).
-  - Path fields are recalculated when biome/tower layout changes.
-  - Flying enemies still follow flying lane points and ignore ground blockers.
-  - Every lane route now terminates at bastion core endpoint.
-  - Core damage/escape resolution is based on entering the core endpoint zone.
-  - Speed is influenced by statuses and support aura effects.
-- Boss pacing:
-  - Boss phase thresholds add encounter spikes such as reinforcement summons and tower pressure pulses.
+  - Ground enemies use `NavigationGrid.sampleFlowTarget` toward core with blockers from obstacles+towers+core.
+  - Flying enemies move lane-point to lane-point on `flyingPoints`.
+  - Lane definitions are authored to terminate at bastion core endpoint.
+  - Core reach checks use `CORE_REACH_RADIUS + collisionRadius + epsilon`.
+- Boss behavior:
+  - Below 66% HP: phase 2, spawns 4 grunts across available lanes.
+  - Below 33% HP: phase 3, immediate tower damage pulse in radius.
+  - Phase 2+: periodic tower chip damage near boss.
 - Wave completion:
-  - Queue exhaustion plus no living enemies triggers a short clear delay, then transition to upgrade.
+  - Queue empty + no living enemies starts a `1.25s` clear delay.
+  - On finish, run stats increment and reward hooks fire.
+  - Wave always enters `upgrade` mode for a pick.
+  - Biome-final and run-final transitions are queued, then resolved after the upgrade pick.
 
 ## Key Rules
 
-- Escaped enemies damage the core and are not rewarded as kills.
-- Elite and boss tags increase target priority and reward implications.
-- Wave cannot be completed until both queue and current enemies are fully resolved.
-- End-of-wave always routes into upgrade choice before next wave progression.
+- Escaped enemies damage core and are marked `escaped`; they do not grant kill rewards.
+- Enemy reward processing only applies to `killed` outcomes.
+- Boss and elite kills can trigger additional economy bonuses depending on owned upgrades.
+- Biome progression and victory completion are deferred until post-upgrade transition resolution.
 
 ## Dependencies
 
-- Wave queue lifecycle: [WaveDirector](../../src/game/systems/WaveDirector.ts)
-- Enemy creation and behavior updates: [GameApp](../../src/game/GameApp.ts)
-- Enemy stat templates and scaling: [archetypes](../../src/game/data/archetypes.ts)
-- Biome wave template data: [biomes](../../src/game/data/biomes.ts)
+- Wave queue and progression: [WaveDirector](../../src/game/systems/WaveDirector.ts)
+- Spawn, movement, boss logic, reward cleanup: [GameApp](../../src/game/GameApp.ts)
+- Pathfinding and route-block checks: [NavigationGrid](../../src/game/systems/navigationGrid.ts)
+- Enemy archetypes and scaling helpers: [archetypes](../../src/game/data/archetypes.ts)
+- Biome lane/hazard/wave data: [biomes](../../src/game/data/biomes.ts)
 - Related specs:
   - [Run Loop and Modes](./run-loop-and-modes.md)
   - [Status Effects and Hazards](./status-effects-and-hazards.md)
@@ -59,6 +62,6 @@ Describe hostile encounter structure: enemy archetypes, wave spawning, boss esca
 
 ## Tuning Notes
 
-- Primary pacing knobs are spawn interval, group count, elite frequency, and boss placement.
-- Health/gold scaling functions shape long-run pressure and economy cadence.
-- Clear delay should be long enough for readability and short enough to keep run momentum.
+- Primary pacing knobs: group counts, spawn intervals, and elite cadence.
+- Difficulty scaling uses `waveHealthScale` and `waveGoldScale`, with per-biome speed bias.
+- Clear-delay timing balances readability against momentum.

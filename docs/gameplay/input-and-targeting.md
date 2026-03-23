@@ -2,47 +2,62 @@
 
 ## Purpose
 
-Describe how player input is captured, translated into game actions, and resolved into valid world targets.
+Describe how keyboard/mouse input is sampled and converted into movement, combat, build, and UI actions.
 
 ## What It Does
 
-- Samples keyboard and mouse input each frame.
-- Splits continuous controls (movement, held fire) from transient controls (mode toggles, upgrade picks).
-- Converts screen pointer coordinates into grounded world-space reticle coordinates.
-- Uses reticle-ground position for freeform build placement and sell targeting.
+- Samples keyboard and mouse state every frame.
+- Separates held inputs (movement/buttons) from transient one-shot actions (mode toggles, hotkeys, utility actions).
+- Converts pointer to NDC and raycasts for reticle-ground/world targeting.
+- Routes digit hotkeys contextually to build slots or upgrade picks.
 
 ## How It Works
 
-- Movement uses directional axes from `WASD`/arrow keys.
-- Primary and secondary mouse buttons map to context-sensitive actions:
-  - In `build`, primary places selected defense at reticle ground position.
-  - In `build`, secondary sells the nearest defense within sell radius of reticle ground position.
-  - Outside `build`, primary drives hero attacks.
-- Action keys trigger mode and utility controls:
-  - `B` toggles build/combat view during active waves.
-  - `N` starts wave (or run from menu path).
-  - `Space` triggers a short jump hop.
-  - `Shift` triggers dash.
-  - `1`/`2`/`3` confirm upgrade choices during upgrade phase.
-  - `R`, `L`, and `F` handle weapon cycle, loadout switch, and fullscreen.
-- Mouse position is normalized to NDC and raycast to arena ground.
-- Reticle frame keeps one shared world target for aiming and a ground-anchored point for build placement.
-- Placement preview validation is evaluated every frame (gold, overlap, core-buffer constraints).
+- Movement:
+  - `WASD` / arrow keys drive camera-relative movement axes.
+- Mouse buttons:
+  - `LMB` held sets `firePrimary`.
+  - `RMB` held sets `fireSecondary`.
+  - In `build`, `LMB` places selected defense and `RMB` sells nearest defense.
+  - Outside `build`, `LMB` drives hero primary fire.
+- Ability and action keys:
+  - `Q` / `E`: ability 1 / ability 2 (tap or hold).
+  - `Shift`: dash (transient trigger).
+  - `Space`: jump (transient trigger).
+  - `R`: cycle weapon.
+  - `L`: switch loadout preset.
+  - `F`: toggle fullscreen.
+- Mode/run control keys (strict separation):
+  - `Enter`: run-start signal only.
+  - `N`: wave-start signal only.
+  - `B`: combat-view toggle signal only.
+- Build selection controls:
+  - `1-8` map to zero-based build slots in `build`.
+  - `[` / `]` cycle build selection in `build`.
+  - Mouse wheel cycles build selection direction.
+- Upgrade selection controls:
+  - In `upgrade`, digit hotkeys map only `1-3` to choice indexes `0-2`.
+- Pointer handling:
+  - Pointer lock is requested on keydown/mousedown/click when possible.
+  - If pointer lock is unavailable, absolute cursor position is still sampled.
+  - Browser blur clears keys/buttons/transients to avoid stuck inputs.
 
 ## Key Rules
 
-- Pointer lock is optional and improves relative aiming without being required.
-- Transient actions are consumed once per sample to avoid accidental repeated toggles.
-- Build interactions require `build` mode and a valid placement preview.
-- Input is cleared on browser blur to prevent stuck movement/fire states.
+- Build placement/sell actions are mode-gated to `build`.
+- Digit hotkeys are mode-routed (`build` slots vs `upgrade` picks).
+- `Enter` no longer emits wave-start side effects.
+- `N` no longer starts runs from terminal modes.
+- `B` only toggles view in toggle-eligible in-run modes.
+- Input transients are consumed once per sample.
 
 ## Dependencies
 
-- Input capture: [InputController](../../src/game/systems/InputController.ts)
-- Reticle snap/select: [reticleFrame](../../src/game/systems/reticleFrame.ts)
-- Placement/sell validation: [buildPlacement](../../src/game/systems/buildPlacement.ts)
-- Screen-to-ground projection: [Renderer3D](../../src/game/render/Renderer3D.ts)
-- Mode/action integration: [GameApp](../../src/game/GameApp.ts)
+- Input capture and state sampling: [InputController](../../src/game/systems/InputController.ts)
+- Digit/mode routing and aiming helpers: [gameplayRules](../../src/game/systems/gameplayRules.ts)
+- Reticle frame construction: [reticleFrame](../../src/game/systems/reticleFrame.ts)
+- Screen-to-world aim sampling: [Renderer3D](../../src/game/render/Renderer3D.ts)
+- Runtime action integration: [GameApp](../../src/game/GameApp.ts)
 - Related specs:
   - [Run Loop and Modes](./run-loop-and-modes.md)
   - [Hero Combat and Loadouts](./hero-combat-and-loadouts.md)
@@ -50,7 +65,6 @@ Describe how player input is captured, translated into game actions, and resolve
 
 ## Tuning Notes
 
-- Sell radius and minimum defense spacing are key feel knobs for build precision.
-- Core no-build radius tunes how hard players can stack defenses near the objective.
-- Pointer lock behavior can be tuned for desktop feel without changing core targeting logic.
-- Context gating (for example, build-only placement) is the primary safeguard against unintended actions.
+- Build interaction feel is mainly controlled by sell radius, spacing limits, and preview validation cadence.
+- Pointer-lock sensitivity is camera-side tuning; input sampling remains stable in both lock and unlocked modes.
+- Context gating (build-only placement/sell, upgrade-only 1-3 picks) prevents accidental cross-mode actions.

@@ -2,51 +2,65 @@
 
 ## Purpose
 
-Define the hero's active-combat role, including movement, attacks, abilities, cooldown economy, and loadout identity.
+Define implemented hero combat behavior: movement, aiming, attacks, abilities, cooldown/mana constraints, and loadout cycling.
 
 ## What It Does
 
-- Gives the player direct lane intervention between automated defenses.
-- Supports multiple weapon profiles and ability combinations.
-- Provides clutch tools (dash, freeze, healing, overcharge) for threat spikes.
-- Adds rotational depth through loadout and weapon switching.
+- Gives the player an active lane-intervention role alongside automated defenses.
+- Supports three weapons with distinct targeting/output patterns.
+- Provides survivability and control abilities with upgrade-driven modifiers.
+- Uses fixed loadout presets that rotate on command.
 
 ## How It Works
 
-- Movement:
-  - Hero movement speed is driven by base stats and multipliers.
-  - Position is clamped to arena bounds for readable combat space.
-- Attacks:
-  - Primary fire is weapon-dependent.
-  - `crossbow`: focused projectile shot.
-  - `arc-gauntlet`: short-range chain damage.
-  - `shot-relic`: burst spread pattern.
-  - Targeting uses soft-lock prioritization near reticle and within weapon range.
+- Movement and facing:
+  - Movement input is camera-relative and clamped to arena bounds.
+  - Hero collision resolves against hero blockers (obstacles, towers, core structure).
+  - Facing tracks reticle direction when valid.
+- Primary attacks (disabled in `build` mode):
+  - `crossbow`: single bolt projectile.
+  - `arc-gauntlet`: chain lightning only if strict cursor target exists in range; otherwise attack can whiff while still consuming cadence.
+  - `shot-relic`: five spread projectiles per attack.
+  - Aim direction is resolved from reticle to hero (fallback to facing only when needed).
+  - Proc payloads (poison / crit-lightning) are attached only to designated projectile roles (crossbow primary, shot-relic center pellet).
+  - `wild-hero-mirror` can add an extra mirror bolt on chance.
+- Attack cadence:
+  - Cooldown is `max(0.04, 1 / finalAttackSpeed)`.
+  - Final attack speed includes hero base attack speed, modifiers, and final-stand multiplier when active.
 - Abilities:
-  - `dash`: displacement plus brief invulnerability, with optional lightning trail synergies.
-  - `explosive-rune`: targeted area burst with shock application.
-  - `freezing-pulse`: close-range freeze/slow crowd control.
-  - `healing-beacon`: hero sustain and local tower repair.
-  - `overcharge-aura`: temporary support window that boosts defense throughput.
+  - `dash`: 5.5-unit displacement over short motion window, brief invulnerability, optional lightning pulse on dash end (`hero-dash-lightning-trail`).
+  - `explosive-rune`: reticle-targeted AoE damage plus shock.
+  - `freezing-pulse`: hero-centered freeze + slow application.
+  - `healing-beacon`: self-heal and nearby tower repair.
+  - `overcharge-aura`: temporary tower overcharge window (duration can be extended by upgrade).
 - Cooldowns and mana:
-  - Abilities require both available mana and zero cooldown.
-  - Mana regenerates passively and is capped.
-  - Selected upgrades reduce costs/cooldowns or amplify effects.
-- Survival:
-  - Hero can be downed by contact damage, then respawns after a delay with partial health.
+  - Cast requires hero alive, ability cooldown <= 0, and enough mana for base cost check.
+  - `hero-mana-efficiency` reduces mana spent after the cast check.
+  - `hero-dash-cooldown` reduces dash cooldown.
+- Loadouts:
+  - `L` cycles three fixed presets:
+    - Preset 1: `crossbow` + `explosive-rune` / `freezing-pulse`
+    - Preset 2: `arc-gauntlet` + `healing-beacon` / `overcharge-aura`
+    - Preset 3: `shot-relic` + `dash` / `explosive-rune`
+  - `R` cycles weapon independently through all weapon archetypes.
+- Survival loop:
+  - Enemy contact deals damage over time on overlap.
+  - On death, hero respawns after 6s at 60% max health.
 
 ## Key Rules
 
-- Hero cannot cast abilities when dead, on cooldown, or below mana cost.
-- Primary fire in `build` mode does not trigger attack behavior.
-- Ability effects are intentionally role-distinct: mobility, burst, control, sustain, team buff.
-- Loadout switching changes both weapon and ability pair identity to reshape playstyle mid-run.
+- Hero cannot cast abilities when dead or while ability cooldown/mana checks fail.
+- Primary fire is mode-gated off in `build`.
+- Arc-gauntlet is strict-cursor-target dependent (no soft lock fallback target acquisition).
+- Dash invulnerability and dash lightning are separate effects.
+- Loadout switching is preset-driven, not free slot editing.
 
 ## Dependencies
 
-- Hero loop and casting: [GameApp](../../src/game/GameApp.ts)
-- Weapon and ability definitions: [archetypes](../../src/game/data/archetypes.ts)
-- Status application and damage outcomes: [StatusSystem](../../src/game/systems/StatusSystem.ts)
+- Hero movement/attack/ability loop: [GameApp](../../src/game/GameApp.ts)
+- Weapon and ability baselines: [archetypes](../../src/game/data/archetypes.ts)
+- Cursor targeting and projectile proc rules: [gameplayRules](../../src/game/systems/gameplayRules.ts)
+- Damage/status resolution: [StatusSystem](../../src/game/systems/StatusSystem.ts)
 - Related specs:
   - [Input and Targeting](./input-and-targeting.md)
   - [Status Effects and Hazards](./status-effects-and-hazards.md)
@@ -54,6 +68,6 @@ Define the hero's active-combat role, including movement, attacks, abilities, co
 
 ## Tuning Notes
 
-- Key balance levers are attack cadence, base damage multipliers, ability radius, and cooldown windows.
-- Respawn timing strongly affects punishment curve without forcing instant run failure.
-- Loadout preset composition should maintain distinct fantasy: precision, support-control, or burst mobility.
+- Core levers: attack cadence, weapon multipliers, crit chance, ability radii, and cooldowns.
+- Dash feel is governed by dash distance, motion duration, and invulnerability window.
+- Preset identity currently emphasizes precision/control, support/control, and burst mobility mixes.

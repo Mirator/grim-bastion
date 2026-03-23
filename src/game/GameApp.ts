@@ -38,8 +38,11 @@ import {
   computeEnemyMoveSpeed,
   computeWitchAuraMultiplier,
   nextCombatViewMode,
+  resolveCursorAimDirection,
   resolveDigitHotkeyAction,
   resolveFinalStandState,
+  resolveHeroProjectileHitProc,
+  resolveStrictCursorTarget,
   shouldTriggerLaneEcho,
   shouldAwardEnemyRewards,
 } from "./systems/gameplayRules";
@@ -58,6 +61,7 @@ import type {
   EnemyType,
   LaneDefinition,
   MutableGameState,
+  PostUpgradeTransition,
   ProjectileState,
   RenderTextSnapshot,
   SaveGameV1,
@@ -439,6 +443,7 @@ export class GameApp {
         clearDelay: 0,
       },
       availableUpgrades: [],
+      postUpgradeTransition: "none",
       ownedUpgradeIds: new Set(this.save.meta.unlockedUpgradeIds),
       baseCoreHealth: 420,
       baseCoreMaxHealth: 420,
@@ -505,16 +510,15 @@ export class GameApp {
   }
 
   private startWave(): void {
-    if (this.state.mode === "menu") {
-      this.startRun();
-      return;
-    }
-
     if (this.state.mode === "upgrade") {
       return;
     }
 
     if (this.state.wave.active) {
+      return;
+    }
+
+    if (this.state.mode === "menu" || this.state.mode === "game-over" || this.state.mode === "victory") {
       return;
     }
 
@@ -546,12 +550,8 @@ export class GameApp {
       this.startWave();
     }
 
-    if (input.toggleBuild) {
-      if (this.state.mode === "menu" || this.state.mode === "game-over" || this.state.mode === "victory") {
-        this.startRun();
-      } else if (canToggleCombatView(this.state.mode)) {
-        this.requestCombatViewToggle();
-      }
+    if (input.toggleBuild && canToggleCombatView(this.state.mode)) {
+      this.requestCombatViewToggle();
     }
 
     if (input.cycleWeapon) {
@@ -736,12 +736,23 @@ export class GameApp {
     const baseDamage =
       this.state.hero.stats.attackDamage * weaponData.damageMultiplier * this.state.modifiers.heroDamageMultiplier * finalStandMultiplier * critMultiplier;
 
-    const target = this.findSoftLockTarget(reticle, weaponData.range);
+    const target = resolveStrictCursorTarget(this.state.enemies, reticle, this.state.hero.position, weaponData.range);
+    const aimDirection = resolveCursorAimDirection(reticle, this.state.hero.position, this.state.hero.facing);
+    const hitProcOptions = {
+      poisonedAttacks: this.state.modifiers.poisonedAttacks,
+      crit,
+      critLightningEnabled: this.state.ownedUpgradeIds.has("hero-crit-lightning"),
+      critLightningDamage: baseDamage * 0.45,
+      critLightningChains: 1,
+    };
+
     if (weapon === "arc-gauntlet") {
-      this.fireArcChain(this.state.hero.position, target, baseDamage, 2 + (this.state.ownedUpgradeIds.has("arc-extended-chain") ? 2 : 0));
+      if (target) {
+        this.fireArcChain(this.state.hero.position, target, baseDamage, 2 + (this.state.ownedUpgradeIds.has("arc-extended-chain") ? 2 : 0));
+      }
     } else if (weapon === "shot-relic") {
       for (let i = -2; i <= 2; i += 1) {
-        const spreadYaw = dirToYaw(this.state.hero.facing) + i * 0.1;
+        const spreadYaw = dirToYaw(aimDirection) + i * 0.1;
         const direction = v3(Math.sin(spreadYaw), 0, Math.cos(spreadYaw));
         this.spawnProjectile("hero", this.state.hero.id, this.state.hero.position, direction, {
           type: "shot",
@@ -752,11 +763,11 @@ export class GameApp {
           targetId: target?.id ?? null,
           chainRemaining: 0,
           tags: ["hero", "shot-relic"],
+          hitProc: resolveHeroProjectileHitProc(weapon, i === 0 ? "spread-center" : "spread-side", hitProcOptions),
         });
       }
     } else {
-      const direction = normalize(sub(target?.position ?? reticle, this.state.hero.position));
-      this.spawnProjectile("hero", this.state.hero.id, this.state.hero.position, direction, {
+      this.spawnProjectile("hero", this.state.hero.id, this.state.hero.position, aimDirection, {
         type: "bolt",
         damage: baseDamage,
         speed: weaponData.projectileSpeed,
@@ -765,25 +776,12 @@ export class GameApp {
         targetId: target?.id ?? null,
         chainRemaining: this.state.ownedUpgradeIds.has("ballista-piercing-bolts") ? 1 : 0,
         tags: ["hero", "crossbow"],
+        hitProc: resolveHeroProjectileHitProc(weapon, "primary", hitProcOptions),
       });
-    }
-
-    if (this.state.modifiers.poisonedAttacks && target) {
-      this.statusSystem.addStatus(target, {
-        type: "poison",
-        intensity: 1,
-        duration: 4,
-        sourceId: "hero-poison",
-      });
-    }
-
-    if (crit && this.state.ownedUpgradeIds.has("hero-crit-lightning") && target) {
-      this.fireArcChain(target.position, target, baseDamage * 0.45, 1);
     }
 
     if (this.state.ownedUpgradeIds.has("wild-hero-mirror") && this.rng.next() < 0.2) {
-      const direction = normalize(sub(target?.position ?? reticle, this.state.hero.position));
-      this.spawnProjectile("hero", this.state.hero.id, this.state.hero.position, direction, {
+      this.spawnProjectile("hero", this.state.hero.id, this.state.hero.position, aimDirection, {
         type: "bolt",
         damage: baseDamage * 0.6,
         speed: weaponData.projectileSpeed,
@@ -792,6 +790,7 @@ export class GameApp {
         targetId: target?.id ?? null,
         chainRemaining: 0,
         tags: ["hero", "mirror"],
+        hitProc: null,
       });
     }
 
@@ -1233,6 +1232,25 @@ export class GameApp {
       this.statusSystem.damageEnemy(this.state, hitEnemy, projectile.damage, damageSource);
       this.audio.play("enemy-hit", 0.9 + this.rng.next() * 0.2);
 
+      if (projectile.hitProc) {
+        if (projectile.hitProc.applyPoison && !hitEnemy.isDead) {
+          this.statusSystem.addStatus(hitEnemy, {
+            type: "poison",
+            intensity: 1,
+            duration: 4,
+            sourceId: "hero-poison",
+          });
+        }
+        if (projectile.hitProc.critLightningDamage > 0 && projectile.hitProc.critLightningChains > 0) {
+          this.fireArcChain(
+            hitEnemy.position,
+            hitEnemy.isDead ? null : hitEnemy,
+            projectile.hitProc.critLightningDamage,
+            projectile.hitProc.critLightningChains,
+          );
+        }
+      }
+
       if (projectile.tags.includes("frost")) {
         this.statusSystem.addStatus(hitEnemy, {
           type: "slow",
@@ -1284,13 +1302,14 @@ export class GameApp {
             speed: length2D(projectile.velocity),
             ttl: 0.65,
             radius: projectile.radius,
-            targetId: bounceTarget.id,
-            chainRemaining: projectile.chainRemaining - 1,
-            tags: [...projectile.tags],
-          });
+              targetId: bounceTarget.id,
+              chainRemaining: projectile.chainRemaining - 1,
+              tags: [...projectile.tags],
+              hitProc: null,
+            });
+          }
         }
       }
-    }
 
     this.state.projectiles = next;
   }
@@ -1628,29 +1647,6 @@ export class GameApp {
     return best;
   }
 
-  private findSoftLockTarget(reticle: Vec3, range: number): EnemyState | null {
-    let best: EnemyState | null = null;
-    let bestScore = Infinity;
-
-    for (const enemy of this.state.enemies) {
-      if (enemy.isDead) {
-        continue;
-      }
-      const distToReticle = distance2D(enemy.position, reticle);
-      const distToHero = distance2D(enemy.position, this.state.hero.position);
-      if (distToHero > range) {
-        continue;
-      }
-      const score = distToReticle * 0.8 + distToHero * 0.3 - (enemy.isElite ? 1.4 : 0) - (enemy.isBoss ? 2.2 : 0);
-      if (score < bestScore) {
-        bestScore = score;
-        best = enemy;
-      }
-    }
-
-    return best;
-  }
-
   private findNearestEnemy(position: Vec3, radius: number, excluded: Set<string>): EnemyState | null {
     let best: EnemyState | null = null;
     let bestDist = radius;
@@ -1711,6 +1707,7 @@ export class GameApp {
       targetId: string | null;
       chainRemaining: number;
       tags: string[];
+      hitProc?: ProjectileState["hitProc"];
     },
   ): void {
     const projectile: ProjectileState = {
@@ -1726,6 +1723,7 @@ export class GameApp {
       chainRemaining: payload.chainRemaining,
       targetId: payload.targetId,
       tags: payload.tags,
+      hitProc: payload.hitProc ?? null,
     };
 
     this.state.projectiles.push(projectile);
@@ -1742,15 +1740,29 @@ export class GameApp {
     }
 
     this.audio.play("upgrade-pick", 1.02);
-    if (this.state.mode === "upgrade") {
-      this.state.mode = "build";
+    this.resolvePostUpgradeTransition();
+  }
+
+  private resolvePostUpgradeTransition(): void {
+    const transition: PostUpgradeTransition = this.state.postUpgradeTransition;
+    this.state.postUpgradeTransition = "none";
+    if (transition === "victory") {
+      this.state.mode = "victory";
+      this.finishRun("victory");
+      return;
     }
+    if (transition === "between-biomes") {
+      this.state.mode = "between-biomes";
+      return;
+    }
+    this.state.mode = "build";
   }
 
   private handleWaveCleared(): void {
     const bonus = this.state.ownedUpgradeIds.has("economy-wave-bonus") ? 90 : 70;
     this.state.resources.gold += bonus;
     this.state.resources.essence += 5;
+    this.state.postUpgradeTransition = "none";
     this.upgradeSystem.rollChoices(this.state, 3);
     this.state.mode = "upgrade";
     this.markEnemyRoutePreviewDirty();
@@ -1760,13 +1772,12 @@ export class GameApp {
     this.state.resources.gold += 110;
     this.state.resources.essence += 15;
     this.state.hero.stats.health = Math.min(this.state.hero.stats.maxHealth, this.state.hero.stats.health + 60);
-    this.state.mode = "between-biomes";
+    this.state.postUpgradeTransition = "between-biomes";
     this.markEnemyRoutePreviewDirty();
   }
 
   private handleRunCompleted(): void {
-    this.state.mode = "victory";
-    this.finishRun("victory");
+    this.state.postUpgradeTransition = "victory";
   }
 
   private finishRun(result: "victory" | "defeat"): void {

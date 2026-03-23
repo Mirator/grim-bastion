@@ -113,7 +113,6 @@ export class WaveDirector {
         return;
       }
       this.hooks.onBiomeCleared();
-      state.mode = "between-biomes";
       return;
     }
 

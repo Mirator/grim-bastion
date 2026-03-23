@@ -1,4 +1,4 @@
-import type { EnemyLifecycleOutcome, GameMode, TowerType, TrapType } from "../types";
+import type { EnemyLifecycleOutcome, GameMode, ProjectileHitProc, TowerType, TrapType, Vec3, WeaponType } from "../types";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -77,6 +77,123 @@ export function shouldTriggerLaneEcho(enabled: boolean, chance: number, roll: nu
   }
   const safeRoll = Number.isFinite(roll) ? roll : 1;
   return safeRoll < clamp(chance, 0, 1);
+}
+
+function distance2D(a: Vec3, b: Vec3): number {
+  return Math.hypot(a.x - b.x, a.z - b.z);
+}
+
+function normalize(direction: Vec3): Vec3 {
+  const magnitude = Math.hypot(direction.x, direction.y, direction.z);
+  if (magnitude <= 1e-6) {
+    return { x: 0, y: 0, z: 0 };
+  }
+  return {
+    x: direction.x / magnitude,
+    y: direction.y / magnitude,
+    z: direction.z / magnitude,
+  };
+}
+
+export interface CursorTargetCandidate {
+  id: string;
+  position: Vec3;
+  collisionRadius: number;
+  isDead: boolean;
+}
+
+export function resolveCursorAimDirection(reticle: Vec3, heroPosition: Vec3, heroFacing: Vec3, minMagnitude = 1e-3): Vec3 {
+  const toReticle = {
+    x: reticle.x - heroPosition.x,
+    y: reticle.y - heroPosition.y,
+    z: reticle.z - heroPosition.z,
+  };
+  if (Math.hypot(toReticle.x, toReticle.y, toReticle.z) > minMagnitude) {
+    return normalize(toReticle);
+  }
+
+  if (Math.hypot(heroFacing.x, heroFacing.y, heroFacing.z) > minMagnitude) {
+    return normalize(heroFacing);
+  }
+
+  return { x: 0, y: 0, z: 1 };
+}
+
+export function resolveStrictCursorTarget<T extends CursorTargetCandidate>(
+  candidates: T[],
+  reticle: Vec3,
+  heroPosition: Vec3,
+  range: number,
+  reticleTolerance = 0.25,
+): T | null {
+  const safeRange = Number.isFinite(range) ? Math.max(0, range) : 0;
+  const safeTolerance = Number.isFinite(reticleTolerance) ? Math.max(0, reticleTolerance) : 0;
+
+  let best: T | null = null;
+  let bestReticleDistance = Infinity;
+  let bestHeroDistance = Infinity;
+
+  for (const candidate of candidates) {
+    if (candidate.isDead) {
+      continue;
+    }
+    const heroDistance = distance2D(candidate.position, heroPosition);
+    if (heroDistance > safeRange) {
+      continue;
+    }
+
+    const reticleDistance = distance2D(candidate.position, reticle);
+    const reticleLimit = Math.max(0, candidate.collisionRadius + safeTolerance);
+    if (reticleDistance > reticleLimit) {
+      continue;
+    }
+
+    if (
+      reticleDistance < bestReticleDistance ||
+      (Math.abs(reticleDistance - bestReticleDistance) <= 1e-6 && heroDistance < bestHeroDistance)
+    ) {
+      best = candidate;
+      bestReticleDistance = reticleDistance;
+      bestHeroDistance = heroDistance;
+    }
+  }
+
+  return best;
+}
+
+export type HeroProjectileRole = "primary" | "spread-center" | "spread-side" | "mirror";
+
+export function resolveHeroProjectileHitProc(
+  weapon: WeaponType,
+  projectileRole: HeroProjectileRole,
+  options: {
+    poisonedAttacks: boolean;
+    crit: boolean;
+    critLightningEnabled: boolean;
+    critLightningDamage: number;
+    critLightningChains: number;
+  },
+): ProjectileHitProc | null {
+  const isProcCarrier =
+    (weapon === "crossbow" && projectileRole === "primary") || (weapon === "shot-relic" && projectileRole === "spread-center");
+  if (!isProcCarrier) {
+    return null;
+  }
+
+  const canCritLightning =
+    options.crit &&
+    options.critLightningEnabled &&
+    options.critLightningDamage > 0 &&
+    options.critLightningChains > 0;
+  if (!options.poisonedAttacks && !canCritLightning) {
+    return null;
+  }
+
+  return {
+    applyPoison: options.poisonedAttacks,
+    critLightningDamage: canCritLightning ? options.critLightningDamage : 0,
+    critLightningChains: canCritLightning ? options.critLightningChains : 0,
+  };
 }
 
 export interface DigitHotkeyAction {

@@ -2,38 +2,58 @@
 
 ## Purpose
 
-Define the top-level structure of a run: what each mode is responsible for, how players progress, and when the run ends.
+Define the top-level structure of a run, including mode transitions, start controls, and wave/biome progression rules.
 
 ## What It Does
 
 - Establishes the playable lifecycle from pre-run to victory/defeat.
-- Splits player intent into phase-specific behavior (building, fighting, upgrading, transitioning).
-- Controls pacing by gating wave starts, upgrade picks, and biome transitions.
+- Splits player intent into phase-specific behavior (planning, fighting, upgrading, transitioning).
+- Encodes strict input responsibilities for run start, wave start, and view toggling.
+- Applies wave-clear and biome-clear transitions with post-upgrade routing.
 
 ## How It Works
 
-- `menu`: initial state before a run starts.
-- `build`: placement/sell planning phase; can start a wave.
-- `wave`: active combat simulation with spawning, movement, damage, and defense execution.
-- `upgrade`: post-wave draft phase; player selects one of three upgrades.
-- `between-biomes`: transition checkpoint after a biome is completed.
-- `victory` / `game-over`: terminal states after full completion or core destruction.
-- Entering a new run resets run-scoped state while preserving persistent save values.
-- During active waves, combat view can flip between `build` and `wave` to support tactical placement and direct fighting in the same encounter window.
+- Modes:
+  - `menu`: initial state before run start.
+  - `build`: freeform placement/sell planning.
+  - `wave`: active combat/spawn simulation.
+  - `upgrade`: post-wave draft selection state.
+  - `between-biomes`: biome transition checkpoint.
+  - `victory` / `game-over`: terminal states.
+- Run start controls:
+  - `Enter` emits run-start only.
+  - `Start Run` UI button triggers run-start only.
+- Wave start controls:
+  - `N` emits wave-start only.
+  - `Start Wave` UI button triggers wave-start only.
+  - Wave start does nothing from terminal modes (`menu`, `game-over`, `victory`).
+- Combat view toggling:
+  - `B` and `Toggle Build` UI button toggle only where combat view toggling is allowed.
+  - Allowed modes for toggling: `build`, `wave`, `between-biomes`.
+- Wave start behavior:
+  - Wave start is blocked while `wave.active` is true and while in `upgrade`.
+  - From `between-biomes`, wave start first sets mode to `build`, then starts the next wave.
+- Wave completion flow:
+  - Queue exhaustion + no living enemies for 1.25s triggers wave finish.
+  - Wave clear grants rewards and rolls 3 upgrade choices.
+  - Player selects one upgrade in `upgrade`, then transition resolves:
+    - normal wave -> `build`
+    - biome-final wave (non-final biome) -> `between-biomes`
+    - final biome completion -> `victory`
 
 ## Key Rules
 
-- Wave start is valid only when not already in an active wave and not in upgrade choice lock.
-- Upgrade mode blocks new wave starts until one upgrade is selected.
-- Build/combat view toggling is only allowed while a wave is active.
-- Run ends in defeat if core health reaches zero.
-- Run ends in victory after clearing the final biome sequence.
+- `canToggleCombatView` only allows toggling in `build`, `wave`, and `between-biomes`.
+- `upgrade` mode blocks wave start until one upgrade is picked.
+- Biome and run completion transitions are deferred until after upgrade selection.
+- Defeat occurs when core health reaches 0.
+- Victory occurs after final-wave upgrade pick resolves final completion.
 
 ## Dependencies
 
-- Runtime orchestration: [GameApp](../../src/game/GameApp.ts)
-- Wave pacing and completion logic: [WaveDirector](../../src/game/systems/WaveDirector.ts)
-- Mode gating helpers: [gameplayRules](../../src/game/systems/gameplayRules.ts)
+- Runtime orchestration and mode/input integration: [GameApp](../../src/game/GameApp.ts)
+- Wave lifecycle and biome progression: [WaveDirector](../../src/game/systems/WaveDirector.ts)
+- Mode toggle helpers: [gameplayRules](../../src/game/systems/gameplayRules.ts)
 - Related specs:
   - [Enemies, Waves, and Bosses](./enemies-waves-and-bosses.md)
   - [Upgrades and Synergies](./upgrades-and-synergies.md)
@@ -41,6 +61,6 @@ Define the top-level structure of a run: what each mode is responsible for, how 
 
 ## Tuning Notes
 
-- Fixed simulation timestep and capped frame delta stabilize behavior across frame rates.
-- Wave clear delay provides a readability pause before mode transition.
-- Starting resources, core health, and wave count per biome define baseline run length and pressure.
+- Fixed-timestep simulation (`1/60`) and capped frame delta (`1/20`) keep run pacing stable.
+- Wave clear delay (`1.25s`) controls readability between combat and transitions.
+- Starting resources, wave rewards, and biome rewards shape run length and pressure ramp.

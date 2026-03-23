@@ -334,3 +334,33 @@ Original prompt: Implement whole [grim_bastion_td_concept.md](grim_bastion_td_co
     - `npm test` passed (14 files, 61 tests),
     - `npm run build` passed,
     - Playwright smoke rerun updated artifacts in `output/web-game-route-preview/` with no `errors-0.json`.
+
+## 2026-03-23
+- Implemented cursor-locked hero aiming pass (removed enemy soft-lock influence from hero attack direction).
+- Added pure aiming/proc helpers in `src/game/systems/gameplayRules.ts`:
+  - `resolveStrictCursorTarget` (reticle-near + in-range target selection, no elite/boss bias),
+  - `resolveCursorAimDirection` (reticle heading with hero-facing fallback),
+  - `resolveHeroProjectileHitProc` (single-proc-carrier mapping by weapon/projectile role).
+- Updated hero combat flow in `src/game/GameApp.ts`:
+  - hero projectiles now always follow cursor heading (`aimDirection`),
+  - arc-gauntlet now whiffs when cursor is not on/near a valid enemy,
+  - removed fire-time poison/crit-lightning application,
+  - moved hero poison/crit-lightning triggers to projectile collision handling,
+  - preserved one-proc-per-attack by assigning proc payload only to crossbow primary bolt and shot-relic center pellet,
+  - mirror bolts explicitly carry no proc payload.
+- Extended projectile model with hit-time proc metadata (`ProjectileHitProc`, `ProjectileState.hitProc`) in `src/game/types.ts`.
+- Updated gameplay docs to match new targeting behavior:
+  - `docs/gameplay/hero-combat-and-loadouts.md`
+  - `docs/gameplay/input-and-targeting.md`
+- Added gameplay rule tests in `tests/gameplay-rules.test.ts`:
+  - strict cursor target selection and arc-whiff case,
+  - aim-direction fallback behavior,
+  - proc-carrier routing (shot-relic center pellet only, mirror excluded).
+- Verification:
+  - `npm test` passed (14 files, 66 tests).
+  - `npm run build` passed.
+  - Playwright repro runs completed with artifacts:
+    - `output/web-game-cursor-aim-repro/`
+    - `output/web-game-cursor-aim-repro-final/`
+  - No Playwright error JSON artifacts were produced in these runs.
+- 2026-03-23 follow-up: hid the in-world 3D reticle sphere (`reticleMesh.visible = false`) so only the center crosshair remains; verified with `npm test`, `npm run build`, and Playwright screenshot artifacts in `output/web-game-no-reticle-sphere/`.

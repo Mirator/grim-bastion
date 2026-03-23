@@ -2,48 +2,62 @@
 
 ## Purpose
 
-Document the resource loops that fund defense growth, ability usage, and long-term progression value.
+Document the implemented gold/mana/essence loops, reward sources, and spend/refund behavior.
 
 ## What It Does
 
-- Governs short-run spending and recovery decisions.
-- Rewards successful defense and wave completion.
-- Connects tactical performance with persistent progression currency.
+- Funds defense placement and active-ability usage.
+- Rewards kill performance, wave clears, and biome clears.
+- Persists run-earned progression value through essence.
 
 ## How It Works
 
 - Resource channels:
-  - `gold`: primary build currency for towers and traps.
-  - `mana`: ability fuel with passive regeneration and cap.
-  - `essence`: progression value carried between runs.
+  - `gold`: build/sell economy.
+  - `mana`: active-ability resource (capped at 100).
+  - `essence`: meta progression currency persisted at run end.
+- Starting values (new run state):
+  - `gold`: 360
+  - `mana`: 60
+  - `essence`: loaded from save meta, then increased during run.
 - Gold income:
-  - Enemy kill bounties, wave-clear bonuses, biome-clear grants, and upgrade-driven bonuses.
-  - Additional bonuses can trigger on elite kills, multi-kills, or boss outcomes.
-- Spending sinks:
-  - Placement costs for towers and traps.
-  - Rebuild opportunity cost when repositioning via sell/refund.
+  - Kill reward on `killed` enemies only:
+    - `bountyGold * economyGoldMultiplier * waveGoldScale(globalWave)`.
+  - Upgrade-dependent bonuses:
+    - Elite bonus (`economy-gold-elite` / `economy-gold-flow-2`).
+    - Combo dividend every 5 kills (`economy-combo-dividend`).
+    - Boss bounty bonus (`economy-boss-bounty`).
+  - Wave clear bonus: +70 (or +90 with `economy-wave-bonus`).
+  - Biome clear bonus: +110.
 - Mana flow:
-  - Passive regeneration baseline.
-  - Conditional generation from specific economy upgrades (for example, trap trigger rewards).
+  - Passive regen: `2.1/s`, multiplied by `1.6` if `economy-mana-regen` is owned.
+  - Trap-trigger gain from `economy-trap-mana` (`economyManaOnTrapTrigger` modifier).
+  - Boss bounty bonus can grant mana.
 - Essence flow:
-  - Earned through kills, waves, and biome progress, with optional bonus effects.
-  - Finalized into persistent save progression at run end.
-- Scaling:
-  - Wave progression influences health and gold scaling to maintain pressure and reward growth.
+  - Kill essence: normal +1, elite +3, boss +20.
+  - Wave clear +5; biome clear +15.
+  - `economy-essence-bonus` adds extra on elite/boss kills.
+- Spending and refunds:
+  - Build costs come from archetype base costs modified by `towerCostMultiplier` / `trapCostMultiplier`.
+  - Sell refunds use tower refund factors or trap 0.7 baseline, with optional `economy-sell-refund` multiplier.
+  - `runStats.goldSpent` tracks placement spending.
+- Run finalization:
+  - End-of-run computes essence gained relative to saved essence baseline.
+  - Save patch adds gained essence, appends run history, and persists unlocked upgrade IDs.
 
 ## Key Rules
 
-- Enemy rewards are tied to killed outcomes, not escaped outcomes.
-- Cost multipliers can reduce placement costs but should preserve minimum meaningful spending decisions.
-- Mana is clamped to its cap and cannot accumulate indefinitely.
-- Sell value is partial, preserving commitment tension while still enabling strategic pivots.
+- Escaped enemies do not grant gold/essence rewards.
+- Mana is clamped to `[0, 100]`.
+- Reward hooks run on wave clear, including biome-final clears before transition override.
+- Cost and refund behavior is deterministic from archetypes + owned upgrade modifiers.
 
 ## Dependencies
 
-- Reward granting and spend logic: [GameApp](../../src/game/GameApp.ts)
-- Enemy bounty and build cost templates: [archetypes](../../src/game/data/archetypes.ts)
-- Economy and reward upgrade definitions: [upgrades data](../../src/game/data/upgrades.ts)
-- Reward eligibility helpers: [gameplayRules](../../src/game/systems/gameplayRules.ts)
+- Reward granting, spend/refund, run-finalization: [GameApp](../../src/game/GameApp.ts)
+- Archetype costs and scaling helpers: [archetypes](../../src/game/data/archetypes.ts)
+- Upgrade definitions modifying economy fields: [upgrades data](../../src/game/data/upgrades.ts)
+- Save persistence and migration: [SaveSystem](../../src/game/systems/SaveSystem.ts)
 - Related specs:
   - [Defenses, Towers, and Traps](./defenses-towers-and-traps.md)
   - [Enemies, Waves, and Bosses](./enemies-waves-and-bosses.md)
@@ -51,6 +65,6 @@ Document the resource loops that fund defense growth, ability usage, and long-te
 
 ## Tuning Notes
 
-- Gold baseline controls early board stability; over-generosity reduces strategic tradeoffs.
-- Mana regen and mana-on-trigger effects define active-ability uptime and should be balanced against cooldowns.
-- Essence gains shape account progression speed and should track intended run length and completion rates.
+- Gold pace is primarily driven by bounty scaling and wave/biome bonuses.
+- Mana economy is controlled by baseline regen plus trap-trigger and boss-bounty injections.
+- Essence pacing directly controls long-term unlock speed.

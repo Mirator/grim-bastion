@@ -1,7 +1,7 @@
 import { biomeSequence } from "../data/biomes";
 import { towerArchetypes, trapArchetypes } from "../data/archetypes";
 import { CORE_BUILD_BUFFER_RADIUS, CORE_WORLD_POSITION } from "../constants";
-import { BUILD_HOTKEY_ORDER } from "../systems/gameplayRules";
+import { BUILD_HOTKEY_ORDER, canToggleCombatView } from "../systems/gameplayRules";
 import type { MutableGameState, TowerType, TrapType, UpgradeDefinition, Vec3 } from "../types";
 
 export interface HudEvents {
@@ -63,6 +63,14 @@ export class HudUI {
 
   private minimapCtx: CanvasRenderingContext2D;
 
+  private readonly startRunButton: HTMLButtonElement;
+
+  private readonly startWaveButton: HTMLButtonElement;
+
+  private readonly toggleBuildButton: HTMLButtonElement;
+
+  private readonly switchLoadoutButton: HTMLButtonElement;
+
   constructor(root: HTMLElement, events: HudEvents) {
     this.root = root;
     this.events = events;
@@ -79,7 +87,7 @@ export class HudUI {
           <h3>Controls</h3>
           <p>Mouse look (locked), center crosshair aim, LMB fire, Q/E abilities, Shift dash, Space jump.</p>
           <p>Build mode: LMB place selected defense at reticle, RMB sell nearest defense.</p>
-          <p>B starts run from menu and toggles build/combat view in-run. N starts wave, 1/2/3 choose upgrades.</p>
+          <p>Enter starts run. N starts wave in-run. B toggles build/combat view in-run.</p>
           <p>Build action bar: 1-8 select slot, mouse wheel or [ / ] cycle slot.</p>
           <p>R weapon, L loadout, F fullscreen.</p>
         </div>
@@ -123,10 +131,15 @@ export class HudUI {
     }
     this.minimapCtx = context;
 
-    this.query<HTMLButtonElement>("#start-run").addEventListener("click", () => this.events.onStartRun());
-    this.query<HTMLButtonElement>("#start-wave").addEventListener("click", () => this.events.onStartWave());
-    this.query<HTMLButtonElement>("#toggle-build").addEventListener("click", () => this.events.onToggleBuild());
-    this.query<HTMLButtonElement>("#switch-loadout").addEventListener("click", () => this.events.onSwitchLoadout());
+    this.startRunButton = this.query<HTMLButtonElement>("#start-run");
+    this.startWaveButton = this.query<HTMLButtonElement>("#start-wave");
+    this.toggleBuildButton = this.query<HTMLButtonElement>("#toggle-build");
+    this.switchLoadoutButton = this.query<HTMLButtonElement>("#switch-loadout");
+
+    this.startRunButton.addEventListener("click", () => this.events.onStartRun());
+    this.startWaveButton.addEventListener("click", () => this.events.onStartWave());
+    this.toggleBuildButton.addEventListener("click", () => this.events.onToggleBuild());
+    this.switchLoadoutButton.addEventListener("click", () => this.events.onSwitchLoadout());
 
     this.renderBuildButtons();
   }
@@ -184,6 +197,13 @@ export class HudUI {
     this.renderMinimap(state);
     this.buildActionBarEl.classList.toggle("hidden", state.mode !== "build");
     this.updateBuildSelection(state.selectedBuildType);
+
+    const canStartRun = state.mode === "menu" || state.mode === "game-over" || state.mode === "victory";
+    const canStartWave = !state.wave.active && (state.mode === "build" || state.mode === "wave" || state.mode === "between-biomes");
+    const canToggleView = canToggleCombatView(state.mode);
+    this.startRunButton.disabled = !canStartRun;
+    this.startWaveButton.disabled = !canStartWave;
+    this.toggleBuildButton.disabled = !canToggleView;
   }
 
   private renderBuildButtons(): void {

@@ -222,6 +222,7 @@ export class Renderer3D {
       new THREE.MeshBasicMaterial({ color: "#f4f1c8", transparent: true, opacity: 0.9 }),
     );
     this.reticleMesh.position.y = 1;
+    this.reticleMesh.visible = false;
     this.scene.add(this.reticleMesh);
 
     this.placementPreviewMesh = new THREE.Mesh(

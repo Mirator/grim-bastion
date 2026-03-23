@@ -6,8 +6,11 @@ import {
   computeStatusMoveMultiplier,
   computeWitchAuraMultiplier,
   nextCombatViewMode,
+  resolveCursorAimDirection,
   resolveDigitHotkeyAction,
   resolveFinalStandState,
+  resolveHeroProjectileHitProc,
+  resolveStrictCursorTarget,
   shouldTriggerLaneEcho,
   shouldAwardEnemyRewards,
 } from "../src/game/systems/gameplayRules";
@@ -82,5 +85,75 @@ describe("gameplay rules", () => {
     expect(computeJumpArcHeight(0.5, peak)).toBeCloseTo(peak, 5);
     expect(computeJumpArcHeight(0.25, peak)).toBeGreaterThan(0);
     expect(computeJumpArcHeight(0.75, peak)).toBeCloseTo(computeJumpArcHeight(0.25, peak), 5);
+  });
+
+  it("selects strict cursor target by reticle proximity without elite/boss bias", () => {
+    const hero = { x: 0, y: 0, z: 0 };
+    const reticle = { x: 2, y: 0, z: 0 };
+    const target = resolveStrictCursorTarget(
+      [
+        { id: "elite", position: { x: 1, y: 0, z: 0 }, collisionRadius: 1.2, isDead: false, isElite: true, isBoss: true },
+        { id: "normal", position: { x: 2.1, y: 0, z: 0 }, collisionRadius: 0.5, isDead: false, isElite: false, isBoss: false },
+      ],
+      reticle,
+      hero,
+      10,
+    );
+    expect(target?.id).toBe("normal");
+  });
+
+  it("returns null when cursor is not near any target in range", () => {
+    const target = resolveStrictCursorTarget(
+      [{ id: "enemy-1", position: { x: 4, y: 0, z: 0 }, collisionRadius: 0.5, isDead: false }],
+      { x: 0, y: 0, z: 4 },
+      { x: 0, y: 0, z: 0 },
+      10,
+    );
+    expect(target).toBeNull();
+  });
+
+  it("resolves aim direction from reticle and falls back to facing near zero vector", () => {
+    const reticleAim = resolveCursorAimDirection({ x: 0, y: 0, z: 5 }, { x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 });
+    expect(reticleAim.x).toBeCloseTo(0, 5);
+    expect(reticleAim.z).toBeCloseTo(1, 5);
+
+    const facingFallback = resolveCursorAimDirection({ x: 1, y: 0, z: 1 }, { x: 1, y: 0, z: 1 }, { x: 2, y: 0, z: 0 });
+    expect(facingFallback.x).toBeCloseTo(1, 5);
+    expect(facingFallback.z).toBeCloseTo(0, 5);
+  });
+
+  it("assigns shot-relic proc payload to center pellet only", () => {
+    const options = {
+      poisonedAttacks: true,
+      crit: true,
+      critLightningEnabled: true,
+      critLightningDamage: 12,
+      critLightningChains: 1,
+    };
+    const roles = ["spread-side", "spread-side", "spread-center", "spread-side", "spread-side"] as const;
+    const procs = roles.map((role) => resolveHeroProjectileHitProc("shot-relic", role, options));
+    expect(procs.filter((entry) => entry !== null)).toHaveLength(1);
+    expect(procs[2]).toEqual({
+      applyPoison: true,
+      critLightningDamage: 12,
+      critLightningChains: 1,
+    });
+  });
+
+  it("does not attach proc payload to mirror or non-carrier projectiles", () => {
+    const options = {
+      poisonedAttacks: true,
+      crit: true,
+      critLightningEnabled: true,
+      critLightningDamage: 8,
+      critLightningChains: 1,
+    };
+    expect(resolveHeroProjectileHitProc("crossbow", "mirror", options)).toBeNull();
+    expect(resolveHeroProjectileHitProc("shot-relic", "spread-side", options)).toBeNull();
+    expect(resolveHeroProjectileHitProc("crossbow", "primary", options)).toEqual({
+      applyPoison: true,
+      critLightningDamage: 8,
+      critLightningChains: 1,
+    });
   });
 });

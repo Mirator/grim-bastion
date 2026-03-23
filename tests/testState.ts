@@ -66,6 +66,7 @@ export function makeTestState(): MutableGameState {
       clearDelay: 0,
     },
     availableUpgrades: [],
+    postUpgradeTransition: "none",
     ownedUpgradeIds: new Set(),
     baseCoreHealth: 200,
     baseCoreMaxHealth: 200,

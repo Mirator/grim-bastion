@@ -4,6 +4,8 @@ import {
   digitHotkeyFromCode,
   isDashKeyCode,
   isJumpKeyCode,
+  isStartRunKeyCode,
+  isStartWaveKeyCode,
 } from "../src/game/systems/InputController";
 
 describe("input controller hotkey mapping", () => {
@@ -24,6 +26,13 @@ describe("input controller hotkey mapping", () => {
     expect(isDashKeyCode("ShiftLeft")).toBe(true);
     expect(isDashKeyCode("ShiftRight")).toBe(true);
     expect(isDashKeyCode("Space")).toBe(false);
+  });
+
+  it("uses strict start controls: Enter starts run, N starts wave", () => {
+    expect(isStartRunKeyCode("Enter")).toBe(true);
+    expect(isStartRunKeyCode("KeyN")).toBe(false);
+    expect(isStartWaveKeyCode("KeyN")).toBe(true);
+    expect(isStartWaveKeyCode("Enter")).toBe(false);
   });
 
   it("maps mouse wheel direction to build cycling", () => {
