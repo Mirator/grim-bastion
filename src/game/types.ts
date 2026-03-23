@@ -346,6 +346,7 @@ export interface WaveRuntimeState {
   waveIndexInBiome: number;
   globalWaveNumber: number;
   bossSpawned: boolean;
+  bossSpawnRetryTimer: number;
   spawnQueue: Array<{
     group: WaveGroup;
     remaining: number;

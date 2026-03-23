@@ -16,7 +16,7 @@ export interface CircleBlocker {
   x: number;
   z: number;
   radius: number;
-  source: "obstacle" | "tower" | "core";
+  source: "obstacle" | "tower" | "core" | "enemy" | "hero";
 }
 
 export interface TracePathOptions {

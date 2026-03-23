@@ -7,9 +7,7 @@ describe("wave director", () => {
   it("creates spawn queue when wave starts", () => {
     const state = makeTestState();
     const wave = new WaveDirector({
-      spawnEnemy: () => {
-        // test hook
-      },
+      spawnEnemy: () => true,
       onWaveCleared: () => {
         // test hook
       },
@@ -39,9 +37,7 @@ describe("wave director", () => {
     let waveCleared = 0;
     let biomeCleared = 0;
     const director = new WaveDirector({
-      spawnEnemy: () => {
-        // no-op
-      },
+      spawnEnemy: () => true,
       onWaveCleared: () => {
         waveCleared += 1;
       },
@@ -75,9 +71,7 @@ describe("wave director", () => {
 
     let runCompleted = 0;
     const director = new WaveDirector({
-      spawnEnemy: () => {
-        // no-op
-      },
+      spawnEnemy: () => true,
       onWaveCleared: () => {
         // no-op
       },
@@ -93,5 +87,91 @@ describe("wave director", () => {
 
     expect(runCompleted).toBe(1);
     expect(state.mode).toBe("upgrade");
+  });
+
+  it("retries blocked group spawns without consuming queue counts", () => {
+    const state = makeTestState();
+    const spawnResults = [false, true];
+    let spawnCalls = 0;
+    const director = new WaveDirector({
+      spawnEnemy: () => {
+        spawnCalls += 1;
+        return spawnResults.shift() ?? true;
+      },
+      onWaveCleared: () => {
+        // no-op
+      },
+      onBiomeCleared: () => {
+        // no-op
+      },
+      onRunCompleted: () => {
+        // no-op
+      },
+    });
+
+    director.startCurrentWave(state);
+    state.wave.spawnQueue = [state.wave.spawnQueue[0]!];
+    const queueEntry = state.wave.spawnQueue[0]!;
+    state.wave.enemiesRemainingEstimate = queueEntry.remaining;
+    const initialRemaining = queueEntry.remaining;
+
+    director.update(state, 0.02);
+    expect(spawnCalls).toBe(1);
+    expect(queueEntry.remaining).toBe(initialRemaining);
+    expect(queueEntry.spawned).toBe(0);
+    expect(queueEntry.timer).toBeCloseTo(0.1, 5);
+
+    director.update(state, 0.05);
+    expect(spawnCalls).toBe(1);
+    expect(queueEntry.remaining).toBe(initialRemaining);
+
+    director.update(state, 0.06);
+    expect(spawnCalls).toBe(2);
+    expect(queueEntry.remaining).toBe(initialRemaining - 1);
+    expect(queueEntry.spawned).toBe(1);
+    expect(queueEntry.timer).toBeCloseTo(queueEntry.group.spawnInterval, 5);
+  });
+
+  it("retries boss spawns until the entrance clears", () => {
+    const state = makeTestState();
+    state.currentBiomeIndex = 0;
+    state.wave.active = true;
+    state.wave.waveIndexInBiome = biomeSequence[0]!.waveTemplates.length - 1;
+    state.wave.spawnQueue = [];
+    state.wave.bossSpawned = false;
+    state.wave.bossSpawnRetryTimer = 0;
+    state.enemies = [];
+
+    const spawnResults = [false, true];
+    let spawnCalls = 0;
+    const director = new WaveDirector({
+      spawnEnemy: () => {
+        spawnCalls += 1;
+        return spawnResults.shift() ?? true;
+      },
+      onWaveCleared: () => {
+        // no-op
+      },
+      onBiomeCleared: () => {
+        // no-op
+      },
+      onRunCompleted: () => {
+        // no-op
+      },
+    });
+
+    director.update(state, 0.02);
+    expect(spawnCalls).toBe(1);
+    expect(state.wave.bossSpawned).toBe(false);
+    expect(state.wave.bossSpawnRetryTimer).toBeCloseTo(0.1, 5);
+    expect(state.wave.enemiesRemainingEstimate).toBe(1);
+
+    director.update(state, 0.05);
+    expect(spawnCalls).toBe(1);
+    expect(state.wave.bossSpawned).toBe(false);
+
+    director.update(state, 0.06);
+    expect(spawnCalls).toBe(2);
+    expect(state.wave.bossSpawned).toBe(true);
   });
 });

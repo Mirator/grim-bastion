@@ -47,13 +47,14 @@ import {
   shouldTriggerLaneEcho,
   shouldAwardEnemyRewards,
 } from "./systems/gameplayRules";
+import { ENEMY_MIN_GAP, resolveEnemyCollisions, type EnemyCollisionCandidate } from "./systems/enemyCollision";
 import { orderedWaveLanes } from "./systems/enemyRoutePreview";
 import { buildReticleFrameData, type ReticleFrameData } from "./systems/reticleFrame";
 import { loadSave, patchSave } from "./systems/SaveSystem";
 import { StatusSystem } from "./systems/StatusSystem";
 import { UpgradeSystem } from "./systems/UpgradeSystem";
 import { WaveDirector, currentWaveTemplate } from "./systems/WaveDirector";
-import { NavigationGrid } from "./systems/navigationGrid";
+import { NavigationGrid, type CircleBlocker } from "./systems/navigationGrid";
 import type {
   AbilityType,
   BuildPlacementPreview,
@@ -99,6 +100,8 @@ const JUMP_DURATION = 0.42;
 const JUMP_PEAK_HEIGHT = 1.05;
 const DASH_MOTION_DURATION = 0.3;
 const CORE_CONTACT_EPSILON = 0.02;
+const ENEMY_COLLISION_PASSES = 3;
+const SPAWN_CLEARANCE_PADDING = 0.18;
 
 function createEmptyPlacementPreview(position: Vec3 = v3()): BuildPlacementPreview {
   return {
@@ -118,6 +121,14 @@ interface PhysicsHandles {
   heroBody: RAPIER.RigidBody;
   heroCollider: RAPIER.Collider;
   enemyBodies: Map<string, RAPIER.RigidBody>;
+}
+
+interface PendingEnemyMovement extends EnemyCollisionCandidate {
+  enemy: EnemyState;
+  previousPosition: Vec3;
+  corePoint: Vec3;
+  lane: LaneDefinition;
+  blockers: CircleBlocker[];
 }
 
 interface DashMotionState {
@@ -440,6 +451,7 @@ export class GameApp {
         waveIndexInBiome: 0,
         globalWaveNumber: 0,
         bossSpawned: false,
+        bossSpawnRetryTimer: 0,
         spawnQueue: [],
         enemiesRemainingEstimate: 0,
         clearDelay: 0,
@@ -651,6 +663,53 @@ export class GameApp {
     return snapshot.multiplier;
   }
 
+  private buildLivingEnemyBlockers(excludedEnemyId: string | null = null): CircleBlocker[] {
+    const blockers: CircleBlocker[] = [];
+    for (const enemy of this.state.enemies) {
+      if (enemy.isDead || enemy.id === excludedEnemyId) {
+        continue;
+      }
+      blockers.push({
+        id: `enemy:${enemy.id}`,
+        x: enemy.position.x,
+        z: enemy.position.z,
+        radius: enemy.collisionRadius,
+        source: "enemy",
+      });
+    }
+    return blockers;
+  }
+
+  private buildHeroBlocker(): CircleBlocker | null {
+    if (!this.state.hero.alive) {
+      return null;
+    }
+    return {
+      id: "__hero__",
+      x: this.state.hero.position.x,
+      z: this.state.hero.position.z,
+      radius: HERO_COLLISION_RADIUS,
+      source: "hero",
+    };
+  }
+
+  private heroBodyCollisionBlockers(): CircleBlocker[] {
+    return [...this.navigation.getHeroCollisionBlockers(), ...this.buildLivingEnemyBlockers()];
+  }
+
+  private enemyBodyMovementBlockers(
+    isFlying: boolean,
+    groundBlockers: CircleBlocker[],
+    structureBlockers: CircleBlocker[],
+  ): CircleBlocker[] {
+    const baseBlockers = isFlying ? structureBlockers : groundBlockers;
+    const heroBlocker = this.buildHeroBlocker();
+    if (!heroBlocker) {
+      return baseBlockers;
+    }
+    return [...baseBlockers, heroBlocker];
+  }
+
   private updateHero(dt: number, input: InputState): void {
     if (!this.state.hero.alive) {
       this.dashMotion = null;
@@ -694,7 +753,7 @@ export class GameApp {
     this.state.hero.position = this.navigation.resolvePositionAgainstBlockers(
       this.state.hero.position,
       HERO_COLLISION_RADIUS,
-      this.navigation.getHeroCollisionBlockers(),
+      this.heroBodyCollisionBlockers(),
     );
     if (this.pendingDashTrailPulse) {
       this.pendingDashTrailPulse = false;
@@ -1326,15 +1385,13 @@ export class GameApp {
   private updateEnemies(dt: number): void {
     const biome = this.currentBiome();
     const laneMap = new Map(biome.lanes.map((lane) => [lane.id, lane]));
-    const livingWitches = this.state.enemies.filter((enemy) => !enemy.isDead && enemy.type === "witch");
+    const livingEnemies = this.state.enemies.filter((enemy) => !enemy.isDead);
+    const livingWitches = livingEnemies.filter((enemy) => enemy.type === "witch");
     const groundBlockers = this.navigation.getGroundCollisionBlockers();
     const structureBlockers = this.navigation.getStructureCollisionBlockers();
+    const pendingMovements: PendingEnemyMovement[] = [];
 
-    for (const enemy of this.state.enemies) {
-      if (enemy.isDead) {
-        continue;
-      }
-
+    for (const enemy of livingEnemies) {
       const lane = laneMap.get(enemy.laneId) ?? biome.lanes[0]!;
       let direction = v3();
       let corePoint = CORE_WORLD_POSITION;
@@ -1345,10 +1402,6 @@ export class GameApp {
         const targetPoint = path[Math.min(path.length - 1, enemy.pathIndex + 1)] ?? corePoint;
         const toTarget = sub(targetPoint, enemy.position);
         direction = normalize(v3(toTarget.x, 0, toTarget.z));
-        if (distance2D(enemy.position, targetPoint) <= 0.7) {
-          enemy.pathIndex += 1;
-          enemy.pathProgress = Math.max(enemy.pathProgress, enemy.pathIndex);
-        }
       } else {
         const flowTarget = this.navigation.sampleFlowTarget(enemy.position, CORE_WORLD_POSITION);
         const toTarget = flowTarget ? sub(flowTarget, enemy.position) : sub(CORE_WORLD_POSITION, enemy.position);
@@ -1366,13 +1419,47 @@ export class GameApp {
       }
       const witchAuraMultiplier = computeWitchAuraMultiplier(nearbyWitches);
       const speed = computeEnemyMoveSpeed(enemy.stats.speed, enemy.movementSpeedMultiplier, witchAuraMultiplier);
-      enemy.velocity = mul(direction, speed);
-      const nextPosition = add(enemy.position, mul(enemy.velocity, dt));
-      enemy.position = enemy.isFlying
-        ? this.navigation.resolvePositionAgainstBlockers(nextPosition, enemy.collisionRadius, structureBlockers)
-        : this.navigation.resolvePositionAgainstBlockers(nextPosition, enemy.collisionRadius, groundBlockers);
+      const desiredVelocity = mul(direction, speed);
+      const blockers = this.enemyBodyMovementBlockers(enemy.isFlying, groundBlockers, structureBlockers);
+      const nextPosition = add(enemy.position, mul(desiredVelocity, dt));
+      pendingMovements.push({
+        id: enemy.id,
+        enemy,
+        position: this.navigation.resolvePositionAgainstBlockers(nextPosition, enemy.collisionRadius, blockers),
+        previousPosition: copyVec3(enemy.position),
+        velocity: desiredVelocity,
+        pathProgress: enemy.pathProgress,
+        collisionRadius: enemy.collisionRadius,
+        isElite: enemy.isElite,
+        isBoss: enemy.isBoss,
+        corePoint,
+        lane,
+        blockers,
+      });
+    }
 
-      if (!enemy.isFlying) {
+    resolveEnemyCollisions(
+      pendingMovements,
+      (movement, position) => this.navigation.resolvePositionAgainstBlockers(position, movement.collisionRadius, movement.blockers),
+      ENEMY_COLLISION_PASSES,
+    );
+
+    const invDt = 1 / Math.max(dt, 1e-6);
+    for (const movement of pendingMovements) {
+      const enemy = movement.enemy;
+      enemy.position = movement.position;
+      enemy.velocity.x = (enemy.position.x - movement.previousPosition.x) * invDt;
+      enemy.velocity.y = (enemy.position.y - movement.previousPosition.y) * invDt;
+      enemy.velocity.z = (enemy.position.z - movement.previousPosition.z) * invDt;
+
+      if (enemy.isFlying) {
+        const path = movement.lane.flyingPoints;
+        const targetPoint = path[Math.min(path.length - 1, enemy.pathIndex + 1)] ?? movement.corePoint;
+        if (distance2D(enemy.position, targetPoint) <= 0.7) {
+          enemy.pathIndex += 1;
+        }
+        enemy.pathProgress = Math.max(enemy.pathProgress, enemy.pathIndex);
+      } else {
         const sampledDistance = this.navigation.sampleDistanceToCore(enemy.position, CORE_WORLD_POSITION);
         const currentDistance = Number.isFinite(sampledDistance)
           ? sampledDistance
@@ -1381,7 +1468,7 @@ export class GameApp {
         enemy.pathProgress = Math.max(enemy.pathProgress, Math.max(0, enemy.spawnDistanceToCore - currentDistance));
       }
 
-      const reachedCore = distance2D(enemy.position, corePoint) <= CORE_REACH_RADIUS + enemy.collisionRadius + CORE_CONTACT_EPSILON;
+      const reachedCore = distance2D(enemy.position, movement.corePoint) <= CORE_REACH_RADIUS + enemy.collisionRadius + CORE_CONTACT_EPSILON;
       if (reachedCore) {
         this.hitCore(enemy.stats.contactDamage, enemy);
         enemy.isDead = true;
@@ -1551,7 +1638,20 @@ export class GameApp {
     }
   }
 
-  private spawnEnemy(enemyType: EnemyType, laneId: string, isElite: boolean, isBoss: boolean): void {
+  private isSpawnPointClear(position: Vec3, collisionRadius: number): boolean {
+    for (const enemy of this.state.enemies) {
+      if (enemy.isDead) {
+        continue;
+      }
+      const requiredDistance = collisionRadius + enemy.collisionRadius + SPAWN_CLEARANCE_PADDING + ENEMY_MIN_GAP;
+      if (distance2D(position, enemy.position) < requiredDistance) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private spawnEnemy(enemyType: EnemyType, laneId: string, isElite: boolean, isBoss: boolean): boolean {
     const biome = this.currentBiome();
     const lane = biome.lanes.find((entry) => entry.id === laneId) ?? biome.lanes[0]!;
     const archetype = enemyArchetypes[enemyType];
@@ -1560,6 +1660,10 @@ export class GameApp {
     const id = this.nextId(`enemy-${enemyType}`);
 
     const spawnPoint = archetype.isFlying ? lane.flyingPoints[0] : lane.points[0];
+    const collisionRadius = archetype.isFlying ? Math.max(0.35, archetype.size) : Math.max(0.45, archetype.size);
+    if (!this.isSpawnPointClear(spawnPoint, collisionRadius)) {
+      return false;
+    }
     this.ensureNavigationState();
     const sampledSpawnDistance = archetype.isFlying
       ? distance2D(spawnPoint, CORE_WORLD_POSITION)
@@ -1591,7 +1695,7 @@ export class GameApp {
         bountyGold: archetype.bountyGold,
       },
       movementSpeedMultiplier: 1,
-      collisionRadius: archetype.isFlying ? Math.max(0.35, archetype.size) : Math.max(0.45, archetype.size),
+      collisionRadius,
       spawnDistanceToCore: spawnDistance,
       lastDistanceToCore: spawnDistance,
       freezeBuildup: 0,
@@ -1615,6 +1719,7 @@ export class GameApp {
     if (enemy.isBoss) {
       this.audio.play("boss-intro", 0.85);
     }
+    return true;
   }
 
   private findTowerTarget(position: Vec3, range: number): EnemyState | null {

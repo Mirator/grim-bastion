@@ -61,6 +61,7 @@ export function makeTestState(): MutableGameState {
       waveIndexInBiome: 0,
       globalWaveNumber: 1,
       bossSpawned: false,
+      bossSpawnRetryTimer: 0,
       spawnQueue: [],
       enemiesRemainingEstimate: 0,
       clearDelay: 0,

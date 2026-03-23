@@ -218,6 +218,39 @@ Original prompt: Implement whole [grim_bastion_td_concept.md](grim_bastion_td_co
   - Extended `tests/build-placement.test.ts` for `obstacle` + `blocks-path` validation.
   - Extended `tests/biome-lanes.test.ts` for obstacle/core-clearance invariants.
   - Updated enemy test fixture fields in `tests/status-system.test.ts`.
+
+## 2026-03-23
+- Implemented enemy-enemy collision separation and spawn-clearance gating:
+  - Added pure `enemyCollision` system with weighted pairwise separation passes for all living enemies.
+  - Refactored `GameApp.updateEnemies` into tentative movement + batch separation + final progress/contact resolution.
+  - Added spawn admission checks in `GameApp.spawnEnemy`; crowded lane origins now refuse the spawn instead of stacking.
+  - Updated `WaveDirector` spawn hook contract to return `boolean` and added short retry delays for blocked group spawns and blocked boss spawns.
+  - Added internal wave retry bookkeeping via `bossSpawnRetryTimer`.
+- Added tests:
+  - `tests/enemy-collision.test.ts` for ground/ground, flying/ground, and weighted front-vs-trailing separation behavior.
+  - Expanded `tests/wave-director.test.ts` for blocked queue spawn retry and blocked boss spawn retry.
+- Verification:
+  - `npm test` passed (15 files, 77 tests).
+  - `npm run build` passed.
+  - Scripted Playwright artifact capture produced:
+    - `output/web-game-spawn-clearance-build/shot-0.png`
+    - `output/web-game-spawn-clearance-build/state-0.json`
+  - Live Playwright smoke run on `http://127.0.0.1:5174/`:
+    - started run, started wave 1, let combat run, inspected screenshot and text state,
+    - closest enemy pair observed at about `0.901` world units instead of near-zero overlap,
+    - early spawn-lane sample showed a staggered chain of grunts leaving the lane origin,
+    - no new console/page errors were observed (warnings only from existing Rapier/Three startup messages).
+- Follow-up collision pass for player body + anti-touch spacing:
+  - Added mutual hero-enemy body collision in `GameApp` by combining dynamic enemy blockers into hero collision resolution and dynamic hero blocker into enemy movement blocker sets.
+  - Added explicit enemy minimum spacing gap (`ENEMY_MIN_GAP = 0.08`) in enemy-enemy separation logic and aligned spawn admission distance checks to include this gap.
+  - Extended blocker source typing to include dynamic blocker types (`enemy`, `hero`).
+  - Added `tests/game-app-collision.test.ts` to validate GameApp-level body-collision behavior (hero cannot overlap enemy body; enemy cannot pass through alive hero in the same tick).
+  - Updated `tests/enemy-collision.test.ts` thresholds to enforce radii + gap minimum distances.
+  - Re-verified:
+    - `npm test` passed (16 files, 79 tests).
+    - `npm run build` passed.
+    - Ruined Gate wave-1 smoke sample (`600` frames / `10s`) returned `globalMin ≈ 0.9809999999999977` for enemy-pair spacing, satisfying `>= 0.98`.
+    - Playwright console error level remained empty (0 errors; warnings unchanged from known Rapier/Three startup warnings).
 - Verification:
   - `npm test` passed (13 files, 54 tests).
   - `npm run build` passed.
